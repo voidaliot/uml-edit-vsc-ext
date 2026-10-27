@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.cache/
+.temp/
+*.vsix
+test-results/
+playwright-report/
+coverage/
+*.log
+*.aliot-*.tmp
+workspace.aliotuml
+.DS_Store

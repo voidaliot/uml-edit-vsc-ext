@@ -1,0 +1,14 @@
+@startuml
+title Checkout
+actor "Customer" as customer
+participant "Storefront" as storefront
+participant "Order service" as orders
+database "Inventory" as stock
+
+customer -> storefront : Submit order
+storefront -> orders : Create order
+orders -> stock : Reserve items
+stock --> orders : Reserved
+orders --> storefront : Order number
+storefront --> customer : Confirmation
+@enduml

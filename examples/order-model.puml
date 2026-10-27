@@ -1,0 +1,22 @@
+@startuml
+title Order model
+
+' Original example for Aliot UML Editor.
+class "Order" as Order {
+  +number: String
+  +createdAt: Date
+  +submit()
+}
+class "Line item" as LineItem {
+  +quantity: Integer
+  +price: Decimal
+  +subtotal(): Decimal
+}
+class "Product" as Product {
+  +sku: String
+  +name: String
+}
+
+Order "1" *-- "many" LineItem : contains
+LineItem --> Product : describes
+@enduml

@@ -1,0 +1,15 @@
+{
+  "name": "PlantUML",
+  "scopeName": "source.plantuml",
+  "patterns": [
+    { "name": "comment.block.plantuml", "begin": "/'", "end": "'/" },
+    { "name": "comment.line.plantuml", "match": "^\\s*'.*$" },
+    { "name": "keyword.control.directive.plantuml", "match": "@(?:start|end)[a-z]+\\b|^\\s*![a-zA-Z_]+" },
+    { "name": "string.quoted.double.plantuml", "begin": "\"", "end": "\"", "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.plantuml" }] },
+    { "name": "keyword.declaration.plantuml", "match": "\\b(?:abstract|class|interface|enum|annotation|entity|object|actor|usecase|component|package|namespace|node|cloud|database|artifact|folder|frame|rectangle|card|queue|stack|storage|state|participant|boundary|control|collections|note|legend|title|header|footer|allowmixing)\\b" },
+    { "name": "keyword.control.plantuml", "match": "\\b(?:as|if|then|else|elseif|endif|while|endwhile|repeat|fork|split|again|start|stop|end|partition|alt|opt|loop|par|break|group|activate|deactivate|return|destroy|create|ref|skinparam|hide|show|left|right|direction)\\b" },
+    { "name": "keyword.operator.arrow.plantuml", "match": "[<|o*}]*[-=.]+(?:left|right|up|down)?[-=.]*[>|o*{]*" },
+    { "name": "constant.other.color.plantuml", "match": "#[a-zA-Z0-9]+" },
+    { "name": "entity.other.attribute-name.stereotype.plantuml", "match": "<<[^>]*>>" }
+  ]
+}

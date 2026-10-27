@@ -1,0 +1,9 @@
+@startuml
+!include <C4/C4_Context>
+title Store context
+Person(customer, "Customer", "Places and tracks orders")
+System(store, "Online store", "Handles product discovery and checkout")
+System_Ext(delivery, "Delivery service", "Delivers purchases")
+Rel(customer, store, "Uses")
+Rel(store, delivery, "Requests shipment")
+@enduml

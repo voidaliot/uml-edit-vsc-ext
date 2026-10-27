@@ -1,0 +1,12 @@
+@startuml
+title Fulfilment
+start
+:Receive order;
+if (Stock available?) then (yes)
+  :Reserve items;
+else (no)
+  :Request replenishment;
+endif
+:Notify customer;
+stop
+@enduml

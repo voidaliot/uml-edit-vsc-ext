@@ -1,0 +1,306 @@
+@startuml
+class "Order" as Order {
+  +number: String
+  +submit()
+}
+class "Line item" as LineItem {
+  +quantity: Integer
+}
+Order "1" *-- "many" LineItem : contains
+@enduml
+
+@startuml
+object "order: Order" as order {
+  number = "A-101"
+}
+object "item: LineItem" as item {
+  quantity = 2
+}
+order --> item : contains
+@enduml
+
+@startuml
+actor "Customer" as customer
+participant "Checkout" as checkout
+participant "Inventory" as inventory
+customer -> checkout : Place order
+checkout -> inventory : Reserve items
+inventory --> checkout : Reserved
+checkout --> customer : Confirmation
+@enduml
+
+@startuml
+left to right direction
+actor "Customer" as customer
+usecase "Place order" as placeOrder
+usecase "Track delivery" as trackDelivery
+customer --> placeOrder
+customer --> trackDelivery
+@enduml
+
+@startuml
+component "Storefront" as storefront
+component "Order service" as orders
+database "Order store" as store
+storefront --> orders : HTTPS
+orders --> store : SQL
+@enduml
+
+@startuml
+node "Application host" as host
+artifact "Order service" as service
+database "Orders" as orders
+host --> service : deploys
+service --> orders : reads / writes
+@enduml
+
+@startuml
+[*] --> Draft
+state "Draft" as Draft
+state "Submitted" as Submitted
+state "Delivered" as Delivered
+Draft --> Submitted : submit
+Submitted --> Delivered : deliver
+Delivered --> [*]
+@enduml
+
+@startuml
+start
+:Receive order;
+if (Items available?) then (yes)
+  :Reserve stock;
+else (no)
+  :Notify customer;
+endif
+:Record result;
+stop
+@enduml
+
+@startuml
+entity "Customer" as Customer {
+  *id: UUID
+  --
+  name: String
+}
+entity "Order" as Order {
+  *id: UUID
+  --
+  customerId: UUID
+}
+Customer ||--o{ Order : places
+@enduml
+
+@startmindmap
+* Product launch
+** Design
+*** Prototype
+** Engineering
+*** Build
+** Operations
+@endmindmap
+
+@startwbs
+* Release
+** Plan
+*** Scope
+*** Schedule
+** Deliver
+*** Review
+@endwbs
+
+@startuml
+start
+:Receive request; <<input>>
+:Validate request; <<task>>
+:Store request; <<procedure>>
+:Send response; <<output>>
+stop
+@enduml
+
+@startuml
+robust "Controller" as controller
+binary "Ready" as ready
+@0
+controller is Idle
+ready is 0
+@15
+controller is Running
+ready is 1
+@45
+controller is Complete
+ready is 0
+@enduml
+
+@startgantt
+Project starts 2026-01-05
+[Specification] as [spec] requires 4 days
+[Specification] is 75% complete
+[Build] as [build] requires 8 days
+[build] starts at [spec]'s end
+[Release] as [release] happens at [build]'s end
+@endgantt
+
+@startchronology
+[Idea proposed] happens on 2026-03-01
+[Prototype reviewed] happens on 2026-03-08
+[First release] happens on 2026-03-21
+@endchronology
+
+@startjson
+{
+  "order": {
+    "reference": "B-42",
+    "items": ["Notebook", "Pencil"],
+    "confirmed": true
+  }
+}
+@endjson
+
+@startyaml
+order:
+  reference: B-42
+  items:
+    - Notebook
+    - Pencil
+  confirmed: true
+@endyaml
+
+@startsalt
+{+
+  <b>Account settings
+  Name | "Your name       "
+  Theme | ^System^
+  [X] Send updates
+  () Standard | (X) Priority
+  [Cancel] | [Save]
+}
+@endsalt
+
+@startebnf
+command = "ship", identifier, [ "express" ];
+identifier = letter, { letter | digit };
+letter = "a" | "b" | "c";
+@endebnf
+
+@startregex
+[A-Z]{2}-[0-9]{4}(draft|final)?
+@endregex
+
+@startmath
+total = sum_(i=1)^n price_i * quantity_i
+@endmath
+
+@startlatex
+\sum_{i=1}^{n} p_i q_i = \frac{a+b}{2}
+@endlatex
+
+@startchart
+h-axis [Jan, Feb, Mar, Apr]
+v-axis "Orders" 0 --> 100 grid
+bar "Completed" [35, 52, 67, 81] #4c8eda
+line "Target" [40, 55, 70, 85] #e7a24b
+legend bottom
+@endchart
+
+@startfiles
+/src/main.ts
+/src/model/order.ts
+/tests/order.test.ts
+/README.md
+@endfiles
+
+@startuml
+!include <C4/C4_Container>
+Person(reader, "Reader", "Finds publications")
+System_Boundary(library, "Digital library") {
+  Container(catalog, "Catalog", "Web application", "Finds available titles")
+  ContainerDb(index, "Search index", "Database", "Stores searchable entries")
+}
+Rel(reader, catalog, "Searches")
+Rel(catalog, index, "Queries")
+@enduml
+
+@startuml
+!include <archimate/Archimate>
+Business_Actor(visitor, "Visitor")
+Business_Process(reserve, "Reserve a title")
+Application_Service(catalog, "Catalog service")
+Rel_Assignment(visitor, reserve, "requests")
+Rel_Serving(catalog, reserve, "supports")
+@enduml
+
+@startnwdiag
+nwdiag {
+  network public {
+    address = "192.0.2.0/24";
+    gateway [address = ".1", description = "Gateway"];
+    portal [address = ".20", description = "Portal"];
+  }
+  network private {
+    portal;
+    storage [address = "10.0.0.8", shape = database];
+  }
+}
+@endnwdiag
+
+@startchen
+entity "Reader" as READER {
+  Number <<key>>
+  Name
+}
+entity "Title" as TITLE {
+  ISBN <<key>>
+}
+relationship "Borrows" as BORROWS {
+  Date
+}
+READER -1- BORROWS
+BORROWS -N- TITLE
+@endchen
+
+@startdot
+digraph publishing {
+  rankdir=LR;
+  draft [label="Draft", shape=box];
+  review [label="Review", shape=diamond];
+  release [label="Published", shape=ellipse];
+  draft -> review [label="submit"];
+  review -> release [label="approve"];
+}
+@enddot
+
+@startditaa
++--------------+       +--------------+
+| Draft        |------>| Published    |
+|              |       | {d}          |
++--------------+       +--------------+
+@endditaa
+
+@startboard
+Ideas
++ Catalog search
++ Reader profiles
+Building
++ Borrowing flow
+Ready
++ Library directory
+@endboard
+
+@startgit
+* a12b345 (HEAD -> main) Add catalog search
+* b23c456 Build library model
+* c34d567 Start project
+@endgit
+
+@startjcckit(680,400)
+# Aliot title: Weekly borrowing
+data/curves = loans returns
+data/loans/title = Loans
+data/loans/x = 0 1 2 3 4
+data/loans/y = 4 8 6 12 10
+data/returns/title = Returns
+data/returns/x = 0 1 2 3 4
+data/returns/y = 2 5 8 7 11
+plot/coordinateSystem/xAxis/axisLabel = Week
+plot/coordinateSystem/yAxis/axisLabel = Books
+@endjcckit

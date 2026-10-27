@@ -1,0 +1,41 @@
+.native-time-axis,.native-timing-signal,.native-gantt-content svg,.native-chronology-content svg{display:block;overflow:visible;max-width:none}
+.native-time-axis text,.native-timing-signal text,.native-gantt-content text{font-family:var(--vscode-editor-font-family,monospace);font-size:10px;fill:var(--vscode-editor-foreground,#d6dce7)}
+.time-axis-line{stroke:var(--vscode-descriptionForeground,#9aa5b5);stroke-width:1.2;fill:none}
+.time-grid-line{stroke:var(--vscode-panel-border,#39414d);stroke-dasharray:3 5;stroke-width:.7;fill:none}
+.time-state-guide{stroke:var(--vscode-panel-border,#39414d);stroke-width:.5;fill:none}
+.time-signal-path{stroke:var(--vscode-charts-blue,#63b3ed);stroke-width:2;fill:none;stroke-linejoin:round}
+.time-value-band{stroke:var(--vscode-charts-blue,#63b3ed);stroke-width:1.4;fill:var(--vscode-editor-selectionBackground,#264f78);fill-opacity:.4}
+.time-message{stroke:var(--vscode-charts-orange,#e8a458);stroke-width:1.2;fill:none}
+.native-gantt-content,.native-chronology-content{position:relative;text-align:left}
+.gantt-bar{fill:var(--vscode-button-secondaryBackground,#3a465a);stroke:var(--vscode-charts-blue,#63b3ed);stroke-width:1.2}
+.gantt-progress{fill:var(--vscode-charts-blue,#63b3ed);fill-opacity:.64}
+.gantt-percent{font-size:10px!important;fill:var(--vscode-editor-foreground,#fff)!important}
+.time-milestone{fill:var(--vscode-charts-orange,#e8a458);stroke:var(--vscode-editor-foreground,#d6dce7);stroke-width:1}
+.gantt-dates,.gantt-resources,.chronology-date{font-size:10px;line-height:15px;color:var(--vscode-descriptionForeground,#aab2c1);white-space:nowrap;padding:0 3px}
+.gantt-resources{font-style:italic}
+.chronology-stem{stroke:var(--vscode-charts-purple,#b294df);stroke-width:1.4;fill:none}
+.chronology-stem,.chronology-dot{pointer-events:none}
+.chronology-dot{fill:var(--vscode-charts-purple,#b294df);stroke:var(--vscode-editor-background,#17202b);stroke-width:1.5}
+.uml-node[class*="kind-timing-"] .node-title,.uml-node[class*="kind-gantt-"] .node-title,.uml-node.kind-chronology-event .node-title{text-align:left;justify-content:flex-start;min-height:30px;padding:4px 6px;font-size:12px}
+.uml-node.kind-timing-axis,.uml-node.kind-gantt-axis,.uml-node.kind-chronology-axis{border:0!important;box-shadow:none!important;background:transparent!important}
+.uml-node.kind-timing-axis .node-title,.uml-node.kind-gantt-axis .node-title,.uml-node.kind-chronology-axis .node-title{display:none}
+.uml-node[class*="kind-timing-"]{background:var(--vscode-editor-background,#17202b)}
+.uml-node.kind-gantt-task,.uml-node.kind-gantt-milestone,.uml-node.kind-chronology-event{border-color:transparent;background:transparent;box-shadow:none}
+.uml-node.kind-gantt-task.is-selected,.uml-node.kind-gantt-milestone.is-selected,.uml-node.kind-chronology-event.is-selected{border-color:var(--vscode-focusBorder,#63b3ed)}
+.uml-node.kind-timing-messages{pointer-events:none!important;border:0!important;background:transparent!important;box-shadow:none!important}
+.native-time-messages{pointer-events:none;overflow:visible}
+.native-time-messages text{font:11px var(--vscode-editor-font-family,monospace);fill:var(--vscode-charts-orange,#e8a458);paint-order:stroke;stroke:var(--vscode-editor-background,#17202b);stroke-width:3px}
+.uml-node.kind-gantt-task .family-content,.uml-node.kind-gantt-milestone .family-content,.uml-node.kind-gantt-axis .family-content{padding:0;min-height:0}
+.uml-node.kind-gantt-task .node-title,.uml-node.kind-gantt-milestone .node-title{position:absolute;z-index:1;top:0;left:0;width:max-content;max-width:100%;min-height:22px;height:auto;padding:3px 4px;background:transparent;align-items:flex-start;justify-content:center;text-align:left;font-size:11px;font-weight:400;line-height:13px}
+.uml-node.kind-gantt-milestone .node-title{left:17px}
+.uml-node.kind-gantt-task .node-name,.uml-node.kind-gantt-milestone .node-name{overflow-wrap:normal;white-space:pre}
+.uml-node.kind-gantt-task .member-editor,.uml-node.kind-gantt-milestone .member-editor{position:relative;z-index:3;background:var(--panel)}
+.uml-node.kind-gantt-task:has(.member-editor),.uml-node.kind-gantt-milestone:has(.member-editor){height:auto!important;min-width:240px}
+.uml-node.kind-gantt-axis{pointer-events:none!important}
+.native-gantt-calendar text{font-family:var(--font);font-size:10px}
+.gantt-calendar-grid{stroke:var(--diagram-line);stroke-opacity:.35;stroke-width:.7;fill:none}
+.gantt-closed-day{fill:var(--diagram-line);fill-opacity:.07}
+.native-gantt-calendar .gantt-month{font-size:12px;font-weight:600}
+.native-gantt-calendar .gantt-resource-name{font-size:11px}
+.native-gantt-calendar .gantt-resource-load{font-size:8px}
+.native-gantt-content .gantt-resource-label{font:10px var(--font);fill:var(--text)}

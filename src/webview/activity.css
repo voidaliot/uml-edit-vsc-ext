@@ -1,0 +1,19 @@
+/* Activity dimensions come from the control-flow layout, including text measurement. */
+.uml-node.activity-node { box-shadow: none; border-width: 1px; font-size: 12px; }
+.activity-node > .node-title { height: 100%; min-height: 0; padding: 7px 12px; background: transparent; font-weight: 400; line-height: 18px; }
+.activity-node.kind-activity, .activity-node.kind-action { border-radius: 9px; }
+.activity-node.kind-activity > .node-title, .activity-node.kind-action > .node-title { border-radius: 8px; }
+.activity-node.kind-start { border: 0; }
+.activity-node.kind-end { border-width: 1.5px; }
+.activity-node.kind-end::after { inset: 3px; }
+.activity-node.activity-control { padding: 0; border: 0; border-radius: 0; background: transparent; clip-path: none; transform: none; box-shadow: none; }
+.activity-node.activity-control::before { content: none; }
+.activity-node.activity-control > .node-title { position: relative; padding: 4px 18px; margin: 0; font-size: 12px; min-height: 0; height: 100%; transform: none; clip-path: none; background: transparent; }
+.activity-control-shape { position: absolute; inset: 0; width: 100%; height: 100%; fill: var(--node-bg); stroke: var(--diagram-line); stroke-width: 1; overflow: visible; pointer-events: none; }
+.activity-control-shape path { fill: none; }
+.activity-node.activity-control.is-selected .activity-control-shape { stroke: var(--accent); stroke-width: 1.5; }
+.activity-node.kind-merge > .node-title { display: none; }
+.activity-node.kind-fork, .activity-node.kind-join { border: 0; border-radius: 0; }
+.activity-node.container-node > .node-title { height: auto; min-height: 30px; padding: 6px 12px; }
+.activity-node.container-node > .node-title .node-name { position: relative; z-index: 1; background: var(--canvas); padding-inline: 3px; margin-left: -3px; }
+.activity-edge-label { font-size: 11px; padding: 1px 3px; line-height: 16px; }
