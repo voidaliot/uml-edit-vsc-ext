@@ -4,7 +4,7 @@ import { UmlEditorProvider } from '../../src/extension';
 import type { HostMessage } from '../../src/shared/protocol';
 import { nativeTemplates } from '../../src/core/templates';
 import { parseDocument } from '../../src/core/parser';
-import { verifyPortableDocuments } from './portable';
+import { verifyLayoutFiles } from './layout-files';
 
 async function eventually(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 12000;
@@ -96,7 +96,7 @@ async function verifyProviderSynchronization(extensionUri: vscode.Uri, workspace
     assert.ok(nativeTemplates.length >= 33, 'The native host must load the expanded diagram catalogue.');
     for (const block of blocks) { assert.ok(block.graphical, `${block.kind}: ${block.warnings.join('; ')}`); assert.ok(block.elements.length > 0, `${block.kind} must project to native elements.`); }
     const finalBlock = blocks.at(-1)!;
-    first.send({ type: 'layout', diagramId: finalBlock.id, layout: { positions: {} } });
+    first.send({ type: 'layout', diagramId: finalBlock.id, layout: { positions: {}, viewport: { x: 0, y: 0, zoom: 1 } } });
     await eventually(() => second.messages.some(message => message.type === 'document' && Object.hasOwn(message.layouts, finalBlock.id)), 'The host must parse the expanded document while accepting a layout update.');
     console.log(`PASS all ${nativeTemplates.length} native diagram families load in the VS Code host`);
 
@@ -117,12 +117,12 @@ async function verifyProviderSynchronization(extensionUri: vscode.Uri, workspace
 }
 
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('aliot.aliot-uml-editor');
+  const extension = vscode.extensions.getExtension('voidaliot.aliot-uml-editor');
   assert.ok(extension, 'The development extension should be installed in the isolated host.');
   await extension.activate();
   assert.ok(extension.isActive, 'The extension activates without throwing.');
   const commands = await vscode.commands.getCommands(true);
-  for (const command of ['aliotUml.openEditor', 'aliotUml.newDiagram', 'aliotUml.openSource', 'aliotUml.saveAliotDocument', 'aliotUml.openAliotDocument', 'aliotUml.exportPlantUml']) {
+  for (const command of ['aliotUml.openEditor', 'aliotUml.newDiagram', 'aliotUml.openSource']) {
     assert.ok(commands.includes(command), `${command} must be registered.`);
   }
   assert.ok(!commands.includes('aliotUml.installRenderer'), 'No external renderer installation command may be registered.');
@@ -174,7 +174,7 @@ export async function run(): Promise<void> {
   console.log('PASS native undo and redo work while the custom editor is active');
 
   await verifyProviderSynchronization(extension.extensionUri, workspace.uri);
-  await verifyPortableDocuments(extension.extensionUri, workspace.uri);
+  await verifyLayoutFiles(extension.extensionUri, workspace.uri);
 
   const previousUris = new Set(customTabs().map(tab => (tab.input as vscode.TabInputCustom).uri.toString()));
   await vscode.commands.executeCommand('aliotUml.newDiagram');
@@ -187,5 +187,5 @@ export async function run(): Promise<void> {
 
   // Native suites run in their own profile/workspace; leave no dirty fixtures behind.
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-  console.log('Aliot UML native smoke: 20 checks passed.');
+  console.log('Aliot UML native smoke: all checks passed.');
 }

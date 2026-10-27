@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { parseDocument } from '../../src/core/parser';
 
@@ -82,7 +81,7 @@ test('a message line can be dragged upward without moving participant columns', 
   expect(after.x).toBeCloseTo(before.x, 0); expect(after.y).toBeCloseTo(before.y, 0);
 });
 
-test('dividers move between message rows and can be resized with undo and portable round trips', async ({ page }) => {
+test('dividers move between message rows and can be resized with undo', async ({ page }) => {
   await open(page);
   const divider = page.locator('.uml-node.kind-sequence-divider'), title = divider.locator('.node-title');
   const initial = (await divider.boundingBox())!;
@@ -105,19 +104,6 @@ test('dividers move between message rows and can be resized with undo and portab
   await expect.poll(async () => (await divider.boundingBox())!.width).toBeCloseTo(before.width, 0);
   await page.getByRole('button', { name: 'Redo (Ctrl+Shift+Z)', exact: true }).click();
   await expect.poll(async () => (await divider.boundingBox())!.width).toBeCloseTo(resized.width, 0);
-  const downloadEvent = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Save Aliot diagram', exact: true }).click();
-  const download = await downloadEvent, file = (await download.path())!;
-  const portable = JSON.parse(await readFile(file, 'utf8'));
-  const id = parseDocument(portable.source).diagrams[0].elements.find(element => element.kind === 'sequence-divider')!.id;
-  expect(portable.layouts['diagram-1'].positions[id].width).toBeGreaterThan(100);
-  const chooserEvent = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Open Aliot diagram', exact: true }).click();
-  await (await chooserEvent).setFiles({ name: 'sequence.aliotuml', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(portable)) });
-  await expect(divider).toBeVisible();
-  await page.waitForTimeout(250);
-  const reopened = (await divider.boundingBox())!;
-  expect(reopened.width).toBeCloseTo(resized.width, 0);
 });
 
 test('connecting lifelines at an existing row inserts a horizontal message at that row', async ({ page }) => {

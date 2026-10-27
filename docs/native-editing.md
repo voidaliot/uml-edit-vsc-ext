@@ -4,27 +4,27 @@ For installation, screenshots, and a quick start, see the [README](../README.md)
 
 Native, editable UML diagrams built with React Flow and synchronized with PlantUML text files. The extension is independently implemented under MIT. It uses no PlantUML renderer, Java runtime, generated diagram images, or remote rendering service.
 
-**Status: 0.3.5 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
+**Status: 0.5.0 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
 
 ## Use in VS Code
 
 1. Install the VSIX with **Extensions → Install from VSIX…**.
-2. Open a `.aliotuml`, `.puml`, `.plantuml`, `.pu`, or `.iuml` file, or run **Aliot UML: New Diagram**.
+2. Open a `.puml`, `.plantuml`, `.pu`, or `.iuml` file, or run **Aliot UML: New Diagram**.
 3. Double-click a name or member compartment to edit it. Right-click the canvas to create elements. Drag handles to connect supported elements.
-4. Use the source editor to edit PlantUML inside the canvas. For plain PlantUML files, **Source file** also opens the text document alongside the diagram. Text edits update the diagram immediately; diagram edits use VS Code undo, redo, and dirty-state handling.
-5. Use **Save Aliot diagram** to save the source and placements together as `.aliotuml`. Once opened, Ctrl/Cmd+S saves that document normally. Use **Export PlantUML** for a plain `.puml` copy.
+4. Use the source editor to edit PlantUML inside the canvas. **Source file** also opens the text document alongside the diagram. Text edits update the diagram immediately; diagram edits use VS Code's dirty-state handling and save with Ctrl/Cmd+S.
+5. Move elements freely. Manual placements are saved automatically in a layout file next to the diagram.
 
-The single toolbar contains open/save/export, diagram selection and creation, Select/Hand tools, an icon-only **Re-layout** button, undo/redo, zoom, fit, outline, minimap, and source actions. Use **Re-layout** after changes to recalculate placement and fit the current diagram. Hover an icon for its name and shortcut. Its source draft is applied with Ctrl+Enter or Apply; conflicting external edits preserve the draft. Naming and creation forms stay inside the diagram and never use VS Code's input box.
+The single toolbar contains diagram selection and creation, Select/Hand tools, an icon-only **Re-layout** button, undo/redo, zoom, fit, outline, minimap, and source actions. Use **Re-layout** after changes to recalculate placement and fit the current diagram. Hover an icon for its name and shortcut. Its source draft is applied with Ctrl+Enter or Apply; conflicting external edits preserve the draft. Naming and creation forms stay inside the diagram and never use VS Code's input box.
 
 ## Portable Aliot documents
 
-An `.aliotuml` file is readable, versioned JSON containing the original PlantUML source plus manual positions and saved viewports for its diagrams. Copy or commit this one file to carry the layout between machines. It needs no sidecar or workspace cache. The format specification is in `docs/aliot-file-format.md`, with an example in `examples/portable.aliotuml`.
+The PlantUML file stays plain PlantUML: other tools, teammates without the extension, and existing projects see exactly the source you wrote. When you move or resize an element, its position goes to a small companion file named after the diagram, for example `order.puml.layout.json`. The file is only created once something is placed manually, and is removed again when **Re-layout** clears every placement. Delete it, ignore it, or leave it out of version control and the diagram falls back to automatic layout. The format is described in [`docs/layout-file-format.md`](layout-file-format.md), with an example in `examples/order-model.puml.layout.json`.
 
-Moving an element in an Aliot document changes its saved layout and participates in VS Code undo/redo. Source edits retain placements. Pan, zoom, and fit keep the current view in memory without marking a file dirty; the viewport is saved with the next placement change or **Save Aliot diagram**. **Re-layout** clears manual positions. Invalid JSON or unsupported format versions report an error without overwriting the file.
+Placement and source edits share one undo/redo history in the diagram: the toolbar buttons and Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z step back through moves, resizes, renames and source edits in the order they were made, including edits typed in a text editor beside the diagram. Undo from a text editor or the **Edit** menu undoes source only. Pan, zoom and fit are personal view state: they are kept in the VS Code workspace and never written to the layout file.
 
-Plain `.puml` files continue to be edited as ordinary PlantUML, with placement kept in the current VS Code workspace. Save as `.aliotuml` when placement must travel with the document. **Export PlantUML** writes only the embedded source; PlantUML does not encode these manual canvas positions. Saving a portable copy does not create a second automatically synchronized source file.
+Renaming, moving or deleting a diagram in VS Code does the same to its layout file. Outside VS Code (a terminal, git), move both files together. When the layout file changes on disk, for example after a checkout, open diagrams reload it and start a new placement history. An invalid layout file is reported and left untouched until the next manual placement replaces it. Untitled diagrams keep their placement in memory until they are saved.
 
-In the browser preview, **Save Aliot diagram** downloads a portable file and **Open Aliot diagram** loads one, including its positions. Opening a local file leaves any live preview connection and edits an independent browser document. Export and save download snapshots; use the extension or `--model` preview for direct disk editing.
+In the browser preview, **Open PlantUML file** loads a local file as an independent browser document and **Download PlantUML** saves its source. Use the extension or the `--model` preview for direct disk editing.
 
 ## Native diagram families
 
@@ -82,9 +82,9 @@ Basic formatted labels and selected stock icon names render natively. Simple loc
 | Hand tool | H; drag pans, wheel zooms |
 | Temporary Hand / Select / Fit | Hold Space / V / F |
 
-Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved inside `.aliotuml` documents, or in VS Code workspace storage when editing plain PlantUML.
+Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved in the diagram's layout file.
 
-Sequence connections use row-specific lifeline handles and insert source at the chosen row. Message and divider vertical drags reorder source events, retaining directly attached activation directives. Else dividers remain inside their fragment. Divider horizontal positions and widths use the saved layout; native undo/redo for these presentation edits is available in portable `.aliotuml` documents.
+Sequence connections use row-specific lifeline handles and insert source at the chosen row. Message and divider vertical drags reorder source events, retaining directly attached activation directives. Else dividers remain inside their fragment. Divider horizontal positions and widths are saved in the layout file and take part in the shared undo/redo history.
 
 Activity layout follows the control flow: centered action chains, balanced branches and merges, parallel fork lanes and outer loop paths. Node dimensions follow their labels. Pan, zoom and fit preserve automatic layout; only deliberate placement and dragging create manual overrides. **Re-layout** clears those overrides and arranges the current source again, including files positioned with an older extension version.
 
@@ -106,11 +106,11 @@ For an actual file-backed browser preview:
 
 ```sh
 npm run preview -- --model examples/all-native.puml
-# Or edit source and placements directly in a portable document:
-npm run preview -- --model examples/portable.aliotuml
+# Or a diagram with saved placements (order-model.puml.layout.json):
+npm run preview -- --model examples/order-model.puml
 ```
 
-With `--model`, external file changes update the canvas, and diagram edits are written to the specified file. It preserves unrelated blocks, rejects stale edits, and appends new diagrams. Its undo history is cleared when an external editor changes the file. The VS Code extension instead uses native text-document undo and saves only through VS Code.
+With `--model`, external file changes update the canvas, diagram edits are written to the specified file, and placements to its layout file. It preserves unrelated blocks, rejects stale edits, and appends new diagrams. Source and placement share one undo history, which is cleared when an external editor changes either file. The VS Code extension combines its placement history with native text-document undo and saves the source only through VS Code.
 
 ```sh
 npx playwright install chromium

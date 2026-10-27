@@ -37,9 +37,6 @@ export function validWebviewMessage(value: unknown): value is WebviewMessage {
   if (!object(value)) return false;
   switch (value.type) {
     case 'ready':
-    case 'saveAliot':
-    case 'openAliot':
-    case 'exportPlantUml':
     case 'undo':
     case 'redo': return true;
     case 'openSource': return value.line === undefined || (version(value.line) && value.line <= 1e7);

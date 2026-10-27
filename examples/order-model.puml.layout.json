@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "diagrams": {
+    "diagram-1": {
+      "positions": {
+        "Order": { "x": 80, "y": 80 },
+        "LineItem": { "x": 420, "y": 80 },
+        "Product": { "x": 420, "y": 320 }
+      }
+    }
+  }
+}

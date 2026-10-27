@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-10-27
+
+- PlantUML files stay plain PlantUML. Manual positions and sizes are saved automatically to a companion layout file, `<diagram>.puml.layout.json`, written one element per line, created only when something is placed manually and removed by **Re-layout**. Pan and zoom stay in the VS Code workspace.
+- Moves, resizes and source edits share one undo/redo history in the diagram, including edits typed in a text editor beside it. Undo from a text editor or the Edit menu keeps that history consistent.
+- Renaming, moving or deleting a diagram in VS Code does the same to its layout file. External changes to the layout file reload live; invalid files are reported and left untouched.
+- Removed the `.aliotuml` format and the **Save Aliot diagram**, **Open Aliot diagram** and **Export PlantUML** commands. The browser preview offers **Open PlantUML file** and **Download PlantUML**.
+- First Marketplace release as `voidaliot.aliot-uml-editor`, marked as a preview. The package declares its public GitHub repository, issue tracker and homepage, so README images and documentation links resolve on the Marketplace listing.
+- Canvas placement no longer adjusts stored layout points in place when an element's horizontal position is locked to its automatic layout.
+
+## 0.4.0 — 2026-10-27
+
+- Packages the current editor improvements as version 0.4.0, including sequence message reordering, movable and resizable dividers, row-aligned lifeline connections, and portable divider geometry.
+- Includes the toolbar simplification and C4 connector layout fixes from the preceding preview releases.
+
 ## 0.3.5 — 2026-10-27
 
 - Sequence messages can be dragged vertically by their line or label to reorder the PlantUML source. Focused labels also accept Up/Down arrows. Implicit participant declarations are made explicit when needed to retain column order.

@@ -54,7 +54,7 @@ export type DiagramEdit =
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;
 export type HostMessage =
-  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; format?: 'plantuml' | 'aliot'; aliotDocument?: string; revision?: number }
+  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number }
   | { type: 'showSource' }
   | { type: 'error'; message: string };
 export type WebviewMessage =
@@ -63,8 +63,5 @@ export type WebviewMessage =
   | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point> }
   | { type: 'create'; kind: DiagramKind }
   | { type: 'openSource'; line?: number }
-  | { type: 'saveAliot' }
-  | { type: 'openAliot' }
-  | { type: 'exportPlantUml' }
   | { type: 'undo' }
   | { type: 'redo' };
