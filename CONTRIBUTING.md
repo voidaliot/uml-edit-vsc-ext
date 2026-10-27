@@ -33,6 +33,10 @@ Run `npm run check` and `npm run test:web` before contributing. For parser/templ
 
 The extension is published as `voidaliot.aliot-uml-editor` from https://github.com/voidaliot/uml-edit-vsc-ext. `npm run package` builds the VSIX only; publishing (`vsce publish` or a Marketplace upload) is a separate, manual step by the project owner.
 
+## Releases
+
+Every push to `main` runs the Release workflow (`.github/workflows/release.yml`), which first runs the full CI. When the `version` in `package.json` has no `v<version>` tag yet, it packages the VSIX, tags the commit as `v<version>` and publishes a GitHub release with the VSIX attached and the matching `CHANGELOG.md` section as notes. A missing changelog section fails the release. To release, bump the version, add its changelog section, and merge to `main`; a merge without a version bump only runs CI. Marketplace publishing stays manual.
+
 ## README screenshots
 
 Run `node scripts/capture-readme.mjs` to refresh the four PNGs in `media/screenshots/`. Install Chromium with `npx playwright install chromium` if needed. The command starts and stops its own local preview on port 4187, uses the original bundled examples, and captures the actual editor without changing their files. Browser page errors fail the capture.

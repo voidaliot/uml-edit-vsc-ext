@@ -8,6 +8,8 @@
 - Removed the `.aliotuml` format and the **Save Aliot diagram**, **Open Aliot diagram** and **Export PlantUML** commands. The browser preview offers **Open PlantUML file** and **Download PlantUML**.
 - First Marketplace release as `voidaliot.aliot-uml-editor`, marked as a preview. The package declares its public GitHub repository, issue tracker and homepage, so README images and documentation links resolve on the Marketplace listing.
 - Canvas placement no longer adjusts stored layout points in place when an element's horizontal position is locked to its automatic layout.
+- Multiline labels in SDL activity shapes no longer overflow their shape with wider fonts, such as the default Linux sans-serif.
+- Releases are tagged and built automatically: merging a new version to `main` publishes a GitHub release with the VSIX attached.
 
 ## 0.4.0 — 2026-10-27
 

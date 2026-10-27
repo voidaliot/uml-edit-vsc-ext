@@ -13,7 +13,20 @@ function textSize(text: string, minimum: number, maximum: number, inset: number)
   const length = (value: string) => [...value].reduce((sum, char) => sum + (/[^\u0000-\u00ff]/.test(char) ? 12 : /[MW@#%]/.test(char) ? 9 : /[il.,'!:;| ]/.test(char) ? 3.8 : 6.7), 0);
   const natural = Math.max(0, ...lines.map(length));
   const width = Math.ceil(Math.max(minimum, Math.min(maximum, natural + inset)) / 2) * 2;
-  const rows = lines.reduce((sum, line) => sum + Math.max(1, Math.ceil(length(line) / Math.max(32, width - inset))), 0);
+  // Wrap whole words as the browser does; a word moved to the next row leaves its gap unused.
+  const room = Math.max(32, width - inset), space = length(' ');
+  const wrap = (line: string) => {
+    let rows = 1, used = 0;
+    for (const word of line.split(' ')) {
+      const size = length(word);
+      if (used && used + space + size <= room) { used += space + size; continue; }
+      if (used) rows++;
+      // A word wider than the row breaks anywhere.
+      rows += Math.max(0, Math.ceil(size / room) - 1); used = size - Math.max(0, Math.ceil(size / room) - 1) * room;
+    }
+    return rows;
+  };
+  const rows = lines.reduce((sum, line) => sum + wrap(line), 0);
   return { width, height: Math.max(36, rows * 18 + 16) };
 }
 
@@ -24,6 +37,8 @@ function measure(element: DiagramElement): Size {
   if (element.kind === 'fork' || element.kind === 'join') return { width: 96, height: 6 };
   if (element.kind === 'decision') return textSize(element.name, 120, 240, 48);
   if (element.kind === 'note') return textSize(element.name, 140, 240, 28);
+  // SDL and named merge shapes pad their labels 18px per side, plus slack for wider fallback fonts.
+  if (element.kind.startsWith('sdl-') || element.kind === 'merge') return textSize(element.name, 120, 220, 44);
   return textSize(element.name, 120, 220, 28);
 }
 
