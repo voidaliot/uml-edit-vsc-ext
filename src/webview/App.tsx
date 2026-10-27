@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ReactFlow, Background, BackgroundVariant, MiniMap, applyNodeChanges, applyEdgeChanges, ConnectionMode, SelectionMode, useReactFlow, useNodesInitialized, type NodeTypes, type EdgeTypes, type Connection, type Viewport, type NodeChange } from '@xyflow/react';
-import { ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Save, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
 import { parseDocument } from '../core/parser';
 import { applyDiagramEdit } from '../core/edits';
 import { layoutDiagram } from '../core/layout';
 import { nativeTemplates, unsupportedTemplates, getTemplate } from '../core/templates';
 import type { DiagramBlock, DiagramEdit, DiagramElement, DiagramRelation, ElementPlacement, HostMessage, LineType, Point } from '../shared/protocol';
-import { send, subscribe, isStandalone, isFilePreview } from './bridge';
+import { send, subscribe, isStandalone, isFilePreview, openLocalFile, downloadSource } from './bridge';
 import { UmlNodeView, type UmlNode } from './nodes';
 import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
 import { prepareGraphPorts, relationHandles } from './connections';
@@ -176,7 +176,8 @@ export function App() {
       const old = previous.find(node => node.id === element.id);
       const remembered = !element.meta?.positionLocked && !element.meta?.moveEdit && Object.hasOwn(saved, element.id) ? saved[element.id] : undefined;
       if (element.kind === 'sequence-divider' && remembered?.width) element.meta = { ...element.meta, width: remembered.width, height: remembered.height ?? 28 };
-      let point = remembered ?? (Object.hasOwn(automatic, element.id) ? automatic[element.id] : undefined) ?? { x: 0, y: 0 };
+      // Copy: saved and automatic points are shared with stored layouts and must not be adjusted in place.
+      let point = { ...(remembered ?? (Object.hasOwn(automatic, element.id) ? automatic[element.id] : undefined) ?? { x: 0, y: 0 }) };
       if (element.meta?.tableRow && element.parentId && automatic[element.id] && automatic[element.parentId]) {
         const parent = Object.hasOwn(saved, element.parentId) ? saved[element.parentId] : automatic[element.parentId];
         point = { x: automatic[element.id].x + parent.x - automatic[element.parentId].x, y: automatic[element.id].y + parent.y - automatic[element.parentId].y };
@@ -416,9 +417,10 @@ export function App() {
         <ToolButton title="Toggle outline" onClick={() => setShowOutline(!showOutline)} active={showOutline}><ListTree size={16} /></ToolButton>
         <label className="diagram-selector"><select aria-label="Current diagram" title="Current diagram" value={diagram?.id ?? ''} disabled={!parsed.diagrams.length} onChange={event => { setActiveId(event.target.value); setSelectedId(undefined); setMenu(undefined); }}>{parsed.diagrams.length ? parsed.diagrams.map((block, index) => <option key={block.id} value={block.id}>{`${index + 1}. ${getTemplate(block.kind)?.label ?? block.kind}${block.title && block.title.toLowerCase() !== `${block.kind} diagram` ? ` — ${block.title}` : ''}`}</option>) : <option value="">Choose a diagram</option>}</select></label>
         <ToolButton title="New diagram" onClick={() => { setShowGallery(true); setGallerySearch(''); }}><FilePlus2 size={16} /></ToolButton>
-        <ToolButton title="Open Aliot diagram" onClick={() => send({ type: 'openAliot' })}><FolderOpen size={16} /></ToolButton>
-        <ToolButton title="Save Aliot diagram" onClick={() => send({ type: 'saveAliot' })} disabled={!documentState || applyingEdit}><Save size={16} /></ToolButton>
-        <ToolButton title="Export PlantUML" onClick={() => send({ type: 'exportPlantUml' })} disabled={!documentState || applyingEdit}><Download size={16} /></ToolButton>
+        {isStandalone && <>
+          <ToolButton title="Open PlantUML file" onClick={openLocalFile}><FolderOpen size={16} /></ToolButton>
+          <ToolButton title="Download PlantUML" onClick={downloadSource} disabled={!documentState || applyingEdit}><Download size={16} /></ToolButton>
+        </>}
       </div>
       <span className="toolbar-divider" />
       <div className="toolbar-group">
@@ -445,7 +447,7 @@ export function App() {
       <span className="toolbar-divider" />
       <div className="toolbar-group">
         <ToolButton title="Edit PlantUML source in canvas" onClick={openSource} disabled={!documentState} active={sourceOpen}><Code2 size={16} /></ToolButton>
-        {documentState?.format !== 'aliot' && <ToolButton title="Source file" disabled={!documentState || isStandalone && !isFilePreview} onClick={() => isFilePreview ? openSource() : send({ type: 'openSource', line: diagram?.startLine })}><SquareArrowOutUpRight size={16} /></ToolButton>}
+        <ToolButton title="Source file" disabled={!documentState || isStandalone && !isFilePreview} onClick={() => isFilePreview ? openSource() : send({ type: 'openSource', line: diagram?.startLine })}><SquareArrowOutUpRight size={16} /></ToolButton>
       </div>
     </header>
     <div className="workspace">

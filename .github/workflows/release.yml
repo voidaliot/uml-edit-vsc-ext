@@ -1,0 +1,70 @@
+name: Release
+# Every push to main is tested. When package.json carries a version that has no
+# v<version> tag yet, the extension is packaged and published as a GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Check for a new version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already tagged; nothing to release."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - if: steps.version.outputs.new == 'true'
+        name: Package the extension
+        run: |
+          npm ci
+          npx vsce package --no-dependencies --out "aliot-uml-editor-${{ steps.version.outputs.version }}.vsix"
+      - if: steps.version.outputs.new == 'true'
+        name: Release notes from the changelog
+        run: |
+          awk -v version="${{ steps.version.outputs.version }}" '
+            /^## / { if (found) exit; found = index($0, "## " version " ") == 1 || $0 == "## " version; next }
+            found
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for ${{ steps.version.outputs.version }}."
+            exit 1
+          fi
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aliot-uml-editor-${{ steps.version.outputs.version }}
+          path: aliot-uml-editor-${{ steps.version.outputs.version }}.vsix
+      - if: steps.version.outputs.new == 'true'
+        name: Tag and publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" "aliot-uml-editor-$VERSION.vsix" \
+            --target "$GITHUB_SHA" --title "v$VERSION" --notes-file release-notes.md

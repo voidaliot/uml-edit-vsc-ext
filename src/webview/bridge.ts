@@ -2,7 +2,7 @@ import type { HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
 import { applyDiagramEdit } from '../core/edits';
 import { getNativeTemplate } from '../core/templates';
 import { mergeLayoutPositions } from '../host/messages';
-import { ALIOT_EXTENSION, ALIOT_MAX_DOCUMENT_BYTES, ALIOT_MAX_SOURCE_BYTES, isAliotFile, readEditorDocument, serializeAliotDocument, writeEditorLayout, writeEditorSource } from '../core/aliot-document';
+import { MAX_SOURCE_BYTES, validateSource } from '../core/layout-file';
 
 declare global {
   interface Window {
@@ -26,8 +26,6 @@ let lastPreviewRevision = -1;
 let connectionEpoch = 0;
 let previewQueue: Promise<void> = Promise.resolve();
 let fileName = window.__ALIOT_FILE_NAME__ ?? 'order-management.puml';
-let format: 'plantuml' | 'aliot' = isAliotFile(fileName) ? 'aliot' : 'plantuml';
-let aliotEnvelope: string | undefined;
 const pendingLayouts = new Set<Extract<WebviewMessage, { type: 'layout' }>>();
 const acceptPreviewMessage = (message: HostMessage) => {
   if (message.type === 'document') {
@@ -35,13 +33,12 @@ const acceptPreviewMessage = (message: HostMessage) => {
     if (message.revision !== undefined && message.revision < lastPreviewRevision) return;
     lastPreviewVersion = message.version;
     if (message.revision !== undefined) lastPreviewRevision = message.revision;
-    source = message.source; version = message.version; fileName = message.fileName; format = message.format ?? (isAliotFile(fileName) ? 'aliot' : 'plantuml');
-    aliotEnvelope = format === 'aliot' ? message.aliotDocument : undefined;
+    source = message.source; version = message.version; fileName = message.fileName;
     layouts = { ...message.layouts };
     for (const pending of pendingLayouts) if (pending.version === undefined || pending.version === message.version) {
       layouts[pending.diagramId] = mergeLayoutPositions(layouts[pending.diagramId] ?? { positions: {} }, pending.layout, pending.basePositions);
     }
-    emit({ ...message, format, layouts });
+    emit({ ...message, layouts });
     return;
   }
   emit(message);
@@ -49,52 +46,52 @@ const acceptPreviewMessage = (message: HostMessage) => {
 let source = window.__ALIOT_INITIAL_SOURCE__ ?? '@startuml\ntitle Order management\nclass "Order" as Order {\n  + id: UUID\n  + status: OrderStatus\n  + submit()\n}\nclass "Line item" as LineItem {\n  + quantity: int\n  + unitPrice: Money\n}\nclass "Customer" as Customer {\n  + name: String\n  + email: String\n}\nOrder *-- LineItem : contains\nCustomer --> Order : places\n@enduml\n';
 let version = 1;
 let layouts: Layouts = {};
-interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; format: 'plantuml' | 'aliot'; aliotEnvelope?: string; kind: 'source' | 'document' | 'layout' }
+interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; kind: 'source' | 'document' | 'layout' }
 const undo: HistorySnapshot[] = [];
 const redo: HistorySnapshot[] = [];
-const documentMessage = (): HostMessage => ({ type: 'document', source, version, layouts, trusted: true, fileName, format });
-const historySnapshot = (kind: HistorySnapshot['kind'] = 'source'): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, format, aliotEnvelope, kind });
+const documentMessage = (): HostMessage => ({ type: 'document', source, version, layouts, trusted: true, fileName });
+const historySnapshot = (kind: HistorySnapshot['kind'] = 'source'): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, kind });
 function restoreHistory(snapshot: HistorySnapshot) {
   if (snapshot.kind !== 'layout' || source !== snapshot.source) version++;
-  source = snapshot.source; layouts = snapshot.layouts; fileName = snapshot.fileName; format = snapshot.format; aliotEnvelope = snapshot.aliotEnvelope;
+  source = snapshot.source; layouts = snapshot.layouts; fileName = snapshot.fileName;
   if (snapshot.kind === 'document') emit({ type: 'documentOpened' });
   emit(documentMessage());
 }
 
-function portableDocument(): string {
-  if (aliotEnvelope === undefined) return serializeAliotDocument(source, layouts);
-  let document = writeEditorSource(aliotEnvelope, fileName, source);
-  for (const [id, layout] of Object.entries(layouts)) document = writeEditorLayout(document, fileName, id, layout);
-  return document;
+/** Browser preview only: VS Code saves the document natively. */
+export function downloadSource(): void {
+  const epoch = connectionEpoch;
+  void previewQueue.then(() => { if (epoch === connectionEpoch) downloadText(source); });
 }
 
-function downloadDocument(content: string, extension: string, type: string) {
-  const stem = fileName.replace(/^.*[\\/]/, '').replace(/\.(?:aliotuml|puml|plantuml|pu|iuml)$/i, '') || 'diagram';
-  const url = URL.createObjectURL(new Blob([content], { type }));
+function downloadText(content: string) {
+  const name = fileName.replace(/^.*[\\/]/, '') || 'diagram.puml';
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   const link = document.createElement('a');
-  link.href = url; link.download = stem + extension; link.style.display = 'none';
+  link.href = url; link.download = /\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`; link.style.display = 'none';
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function openBrowserDocument() {
+/** Browser preview only: open a local PlantUML file as an independent document. */
+export function openLocalFile(): void {
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = `${ALIOT_EXTENSION},.puml,.plantuml,.pu,.iuml`;
-  input.setAttribute('aria-label', 'Open Aliot or PlantUML file'); input.style.display = 'none';
+  input.type = 'file'; input.accept = '.puml,.plantuml,.pu,.iuml';
+  input.setAttribute('aria-label', 'Open PlantUML file'); input.style.display = 'none';
   input.addEventListener('cancel', () => input.remove(), { once: true });
   input.addEventListener('change', () => {
     const file = input.files?.[0];
     if (!file) { input.remove(); return; }
     void (async () => {
       try {
-        const limit = isAliotFile(file.name) ? ALIOT_MAX_DOCUMENT_BYTES : ALIOT_MAX_SOURCE_BYTES;
-        if (file.size > limit) throw new Error(`This file exceeds the ${limit / 1024 / 1024} MiB editor limit.`);
-        const text = await file.text(), opened = readEditorDocument(text, file.name);
+        if (file.size > MAX_SOURCE_BYTES) throw new Error(`This file exceeds the ${MAX_SOURCE_BYTES / 1024 / 1024} MiB editor limit.`);
+        const text = await file.text();
+        validateSource(text);
         // A chosen local file becomes an independent document. Late responses from
         // the former live connection must never replace it or resume disk writes.
         connectionEpoch++; eventStream?.close(); eventStream = undefined; isFilePreview = false;
         pendingLayouts.clear(); lastPreviewVersion = -1; lastPreviewRevision = -1; previewQueue = Promise.resolve();
-        source = opened.source; layouts = opened.layouts; format = opened.format; fileName = file.name; aliotEnvelope = opened.format === 'aliot' ? text : undefined; version++;
+        source = text; layouts = {}; fileName = file.name; version++;
         undo.length = 0; redo.length = 0;
         emit({ type: 'documentOpened' }); emit(documentMessage());
       } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }
@@ -115,18 +112,6 @@ export function subscribe(listener: (message: BridgeMessage) => void): () => voi
 
 export function send(message: WebviewMessage): void {
   if (vscode) { vscode.postMessage(message); return; }
-  if (message.type === 'openAliot') { openBrowserDocument(); return; }
-  if (message.type === 'saveAliot' || message.type === 'exportPlantUml') {
-    const epoch = connectionEpoch;
-    void previewQueue.then(() => {
-      if (epoch !== connectionEpoch) return;
-      try {
-        if (message.type === 'saveAliot') downloadDocument(portableDocument(), ALIOT_EXTENSION, 'application/json');
-        else downloadDocument(source, '.puml', 'text/plain;charset=utf-8');
-      } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }
-    });
-    return;
-  }
   if (isFilePreview) {
     const epoch = connectionEpoch;
     if (message.type === 'layout') {
@@ -183,7 +168,7 @@ export function send(message: WebviewMessage): void {
           const template = getNativeTemplate(message.kind);
           if (!template) throw new Error('This diagram type does not have a native editor yet.');
           undo.push(historySnapshot('document')); redo.length = 0;
-          source = template.source; version++; layouts = {}; aliotEnvelope = undefined; fileName = `${template.kind}${format === 'aliot' ? ALIOT_EXTENSION : '.puml'}`;
+          source = template.source; version++; layouts = {}; fileName = `${template.kind}.puml`;
           emit(documentMessage()); break;
         }
         case 'undo': if (undo.length) { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;

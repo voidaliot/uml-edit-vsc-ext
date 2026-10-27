@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/voidaliot/uml-edit-vsc-ext/schemas/layout.schema.json",
+  "title": "Aliot UML layout file",
+  "description": "Manual element placements for the PlantUML file of the same name (order.puml → order.puml.layout.json). Elements without an entry use the automatic layout.",
+  "type": "object",
+  "required": ["version", "diagrams"],
+  "properties": {
+    "version": { "const": 1, "description": "Layout file format version." },
+    "diagrams": {
+      "type": "object",
+      "description": "Placements keyed by diagram identity: diagram-1, diagram-2, … in source order.",
+      "propertyNames": { "minLength": 1, "maxLength": 1000, "not": { "enum": ["__proto__", "constructor", "prototype"] } },
+      "maxProperties": 10000,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["positions"],
+        "properties": {
+          "positions": {
+            "type": "object",
+            "description": "Absolute canvas coordinates keyed by element identity (usually the PlantUML alias).",
+            "propertyNames": { "minLength": 1, "maxLength": 1000 },
+            "maxProperties": 20000,
+            "additionalProperties": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number", "minimum": -10000000, "maximum": 10000000 },
+                "y": { "type": "number", "minimum": -10000000, "maximum": 10000000 },
+                "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000000, "description": "Resizable elements only, such as sequence dividers." },
+                "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000000 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ const root = resolve(import.meta.dirname, '../..');
 const servers = [
   { port: 4173, script: 'scripts/preview.mjs' },
   { port: 4174, script: 'scripts/preview-live-test.mjs' },
-  { port: 4175, script: 'scripts/preview-portable-test.mjs' },
+  { port: 4175, script: 'scripts/preview-layout-test.mjs' },
 ];
 
 async function assertPortAvailable(port: number): Promise<void> {

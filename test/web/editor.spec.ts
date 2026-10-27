@@ -173,7 +173,7 @@ test('unsupported diagrams are explicit and never request an image renderer', as
   await expect(page.locator('.uml-node, .plantuml-image, .react-flow__node-image')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Set up renderer|Export PlantUML SVG/ })).toHaveCount(0);
   // Plain-source export remains available even for syntax without native shapes.
-  await expect(page.getByRole('button', { name: 'Export PlantUML', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Download PlantUML', exact: true })).toBeEnabled();
   expect(apiRequests).toEqual([]);
   await expect(await source(page)).toHaveValue(/custom syntax/);
 });

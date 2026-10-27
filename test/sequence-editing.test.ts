@@ -3,7 +3,7 @@ import { applyDiagramEdit } from '../src/core/edits';
 import { parseDocument } from '../src/core/parser';
 import { layoutDiagram } from '../src/core/layout';
 import { relationHandles } from '../src/webview/connections';
-import { readEditorDocument, serializeAliotDocument, writeEditorLayout } from '../src/core/aliot-document';
+import { parseLayoutFile, serializeLayoutFile } from '../src/core/layout-file';
 import { mergeLayoutPositions, validWebviewMessage } from '../src/host/messages';
 
 const wrap = (body: string) => `@startuml\n${body}\n@enduml\n`;
@@ -66,16 +66,12 @@ describe('sequence row editing', () => {
   });
 });
 
-describe('portable divider dimensions', () => {
-  it('round trips size-only changes, removes sizes on reset, and preserves unknown metadata', () => {
-    const source = wrap('A -> B : One\n== Phase ==\nB -> A : Two');
-    const original = JSON.parse(serializeAliotDocument(source, { 'diagram-1': { positions: { divider: { x: 60, y: 189, width: 300, height: 28 } } } }));
-    original.layouts['diagram-1'].positions.divider.color = 'custom';
-    const changed = writeEditorLayout(JSON.stringify(original), 'diagram.aliotuml', 'diagram-1', { positions: { divider: { x: 60, y: 189, width: 480, height: 28 } } });
-    expect(readEditorDocument(changed, 'diagram.aliotuml').layouts['diagram-1'].positions.divider.width).toBe(480);
-    expect(JSON.parse(changed).layouts['diagram-1'].positions.divider.color).toBe('custom');
-    const reset = writeEditorLayout(changed, 'diagram.aliotuml', 'diagram-1', { positions: { divider: { x: 60, y: 189 } } });
-    expect(JSON.parse(reset).layouts['diagram-1'].positions.divider).toEqual({ x: 60, y: 189, color: 'custom' });
+describe('divider dimensions in the layout file', () => {
+  it('round trips size changes, drops sizes on reset, and merges against the latest placements', () => {
+    const changed = serializeLayoutFile({ 'diagram-1': { positions: { divider: { x: 60, y: 189, width: 480, height: 28 } } } })!;
+    expect(parseLayoutFile(changed)['diagram-1'].positions.divider.width).toBe(480);
+    const reset = serializeLayoutFile({ 'diagram-1': { positions: { divider: { x: 60, y: 189 } } } })!;
+    expect(parseLayoutFile(reset)['diagram-1'].positions.divider).toEqual({ x: 60, y: 189 });
     const merged = mergeLayoutPositions({ positions: { divider: { x: 60, y: 189, width: 300 }, other: { x: 400, y: 10 } } }, { positions: { divider: { x: 60, y: 189, width: 480 } } }, { divider: { x: 60, y: 189, width: 300 } });
     expect(merged.positions).toEqual({ divider: { x: 60, y: 189, width: 480 }, other: { x: 400, y: 10 } });
   });
@@ -85,7 +81,7 @@ describe('portable divider dimensions', () => {
     expect(validWebviewMessage(layout(300))).toBe(true);
     for (const width of [0, -1, Infinity, NaN, 1e8]) {
       expect(validWebviewMessage(layout(width))).toBe(false);
-      expect(() => serializeAliotDocument('', { 'diagram-1': { positions: { divider: { x: 60, y: 70, width } } } })).toThrow();
+      expect(() => serializeLayoutFile({ 'diagram-1': { positions: { divider: { x: 60, y: 70, width } } } })).toThrow();
     }
     expect(validWebviewMessage({ type: 'edit', version: 1, diagramId: 'diagram-1', edit: { type: 'moveSequenceEvent', eventId: 'message', row: 2 } })).toBe(true);
     expect(validWebviewMessage({ type: 'edit', version: 1, diagramId: 'diagram-1', edit: { type: 'moveSequenceEvent', eventId: 'message', row: -1 } })).toBe(false);

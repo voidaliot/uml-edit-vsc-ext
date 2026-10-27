@@ -2,9 +2,18 @@
   "name": "aliot-uml-editor",
   "displayName": "Aliot UML Editor",
   "description": "Native React Flow UML diagrams with bidirectional editing of PlantUML text files.",
-  "version": "0.3.5",
-  "publisher": "aliot",
+  "version": "0.5.0",
+  "publisher": "voidaliot",
   "license": "MIT",
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/voidaliot/uml-edit-vsc-ext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/voidaliot/uml-edit-vsc-ext/issues"
+  },
+  "homepage": "https://github.com/voidaliot/uml-edit-vsc-ext#readme",
   "engines": {
     "vscode": "^1.104.0",
     "node": ">=22"
@@ -18,8 +27,11 @@
     "plantuml",
     "uml",
     "diagram",
-    "react-flow",
-    "visual-editor"
+    "class diagram",
+    "sequence diagram",
+    "c4",
+    "visual-editor",
+    "react-flow"
   ],
   "main": "./dist/extension.cjs",
   "icon": "media/icon.png",
@@ -50,18 +62,17 @@
           ".iuml"
         ],
         "configuration": "./language-configuration.json"
-      },
-      {
-        "id": "json",
-        "extensions": [
-          ".aliotuml"
-        ]
       }
     ],
     "jsonValidation": [
       {
-        "fileMatch": "*.aliotuml",
-        "url": "./schemas/aliot-uml.schema.json"
+        "fileMatch": [
+          "*.puml.layout.json",
+          "*.plantuml.layout.json",
+          "*.pu.layout.json",
+          "*.iuml.layout.json"
+        ],
+        "url": "./schemas/layout.schema.json"
       }
     ],
     "grammars": [
@@ -87,9 +98,6 @@
           },
           {
             "filenamePattern": "*.iuml"
-          },
-          {
-            "filenamePattern": "*.aliotuml"
           }
         ],
         "priority": "default"
@@ -113,38 +121,20 @@
         "title": "Open PlantUML Source",
         "category": "Aliot UML",
         "icon": "$(code)"
-      },
-      {
-        "command": "aliotUml.saveAliotDocument",
-        "title": "Save Aliot Diagram",
-        "category": "Aliot UML",
-        "icon": "$(save)"
-      },
-      {
-        "command": "aliotUml.openAliotDocument",
-        "title": "Open Aliot Diagram",
-        "category": "Aliot UML",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "aliotUml.exportPlantUml",
-        "title": "Export PlantUML",
-        "category": "Aliot UML",
-        "icon": "$(export)"
       }
     ],
     "menus": {
       "editor/title": [
         {
           "command": "aliotUml.openEditor",
-          "when": "(resourceLangId == plantuml || resourceExtname == .aliotuml) && activeCustomEditorId != aliot.umlEditor",
+          "when": "resourceLangId == plantuml && activeCustomEditorId != aliot.umlEditor",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
           "command": "aliotUml.openEditor",
-          "when": "resourceExtname =~ /\\.(puml|plantuml|pu|iuml|aliotuml)$/",
+          "when": "resourceExtname =~ /\\.(puml|plantuml|pu|iuml)$/",
           "group": "navigation@10"
         }
       ]
@@ -159,7 +149,7 @@
     "test:corpus": "node scripts/check-corpus.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "preview": "node scripts/preview.mjs",
-    "package": "npm run check && vsce package --no-dependencies --allow-missing-repository",
+    "package": "npm run check && vsce package --no-dependencies",
     "vscode:prepublish": "npm run build",
     "test:native": "node scripts/test-native.mjs"
   },
@@ -190,5 +180,9 @@
     "@azure/identity": "4.13.0",
     "uuid": "11.1.1"
   },
-  "type": "module"
+  "type": "module",
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  }
 }

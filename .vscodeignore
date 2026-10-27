@@ -15,6 +15,6 @@ package-lock.json
 *.vsix
 dist/*.map
 *.log
-workspace.aliotuml
+**/*.aliotuml
 .gitignore
 !CONTRIBUTING.md
