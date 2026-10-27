@@ -92,7 +92,9 @@ test('dividers move between message rows and can be resized with undo and portab
     return value.indexOf('== Phase ==') > value.indexOf('C --> A : Third');
   }).toBe(true);
   await expect.poll(async () => (await divider.boundingBox())!.y).toBeGreaterThan(initial.y + 50);
-  await expect.poll(async () => (await divider.boundingBox())!.x).toBeCloseTo(initial.x + 60, 0);
+  // React Flow starts node movement after its drag threshold.
+  await expect.poll(async () => (await divider.boundingBox())!.x).toBeGreaterThan(initial.x + 45);
+  expect((await divider.boundingBox())!.x).toBeLessThan(initial.x + 65);
   await title.click();
   await expect(divider.locator('.sequence-divider-resize.right')).toBeVisible();
   const before = (await divider.boundingBox())!;
