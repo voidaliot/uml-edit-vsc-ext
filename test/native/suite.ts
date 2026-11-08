@@ -4,7 +4,7 @@ import { UmlEditorProvider } from '../../src/extension';
 import type { HostMessage } from '../../src/shared/protocol';
 import { nativeTemplates } from '../../src/core/templates';
 import { parseDocument } from '../../src/core/parser';
-import { verifyLayoutFiles } from './layout-files';
+import { verifyLayoutFiles, verifyLayoutWriteFailures } from './layout-files';
 
 async function eventually(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 12000;
@@ -175,6 +175,7 @@ export async function run(): Promise<void> {
 
   await verifyProviderSynchronization(extension.extensionUri, workspace.uri);
   await verifyLayoutFiles(extension.extensionUri, workspace.uri);
+  await verifyLayoutWriteFailures(extension.extensionUri);
 
   const previousUris = new Set(customTabs().map(tab => (tab.input as vscode.TabInputCustom).uri.toString()));
   await vscode.commands.executeCommand('aliotUml.newDiagram');

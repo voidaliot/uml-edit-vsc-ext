@@ -84,7 +84,11 @@ export function sequenceAnnotations(block: DiagramBlock, lines: string[]) {
     if (note) {
       const begin = line; let name = note[3] ?? '';
       ignored.add(line);
-      if (note[3] === undefined) { while (++line < block.endLine && !/^\s*end\s*[hr]?note/i.test(lines[line])) { ignored.add(line); name += (name ? '\n' : '') + lines[line].trim(); } ignored.add(line); }
+      if (note[3] === undefined) {
+        while (++line < block.endLine && !/^\s*end\s*[hr]?note\b/i.test(lines[line])) { ignored.add(line); name += (name ? '\n' : '') + lines[line].trim(); }
+        if (line >= block.endLine) { block.graphical = false; block.warnings.push(`Line ${begin + 1}: Unclosed sequence note; add end note before the diagram ends.`); break; }
+        ignored.add(line);
+      }
       const item = add('sequence-note', name, begin, { participants: note[2].split(',').map(id => id.trim()).filter(Boolean), side: note[1], multiline: note[3] === undefined }); item.endLine = line; row += Math.max(1, Math.ceil(name.split('\n').length / 2)); continue;
     }
     const act = text.match(/^(activate|deactivate|destroy)\s+(\S+)/i);

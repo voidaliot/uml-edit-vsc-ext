@@ -277,18 +277,16 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
       for (const candidate of block.elements) if (candidate.parentId && ids.has(candidate.parentId)) ids.add(candidate.id);
       for (const candidate of block.elements) if (ids.has(candidate.id)) remove.add(candidate.startLine);
     } else {
-      if (block.elements.some(candidate => candidate.parentId === element.id)) {
-        const descendants = new Set([element.id]);
-        const children = new Map<string, string[]>();
-        for (const candidate of block.elements) if (candidate.parentId) children.set(candidate.parentId, [...children.get(candidate.parentId) ?? [], candidate.id]);
-        const queue = [element.id];
-        while (queue.length) for (const id of children.get(queue.shift()!) ?? []) if (!descendants.has(id)) { descendants.add(id); queue.push(id); }
-        for (const relation of block.relations) if (descendants.has(relation.source) || descendants.has(relation.target)) remove.add(relation.startLine);
-      }
+      const descendants = new Set([element.id]);
+      const children = new Map<string, string[]>();
+      for (const candidate of block.elements) if (candidate.parentId) children.set(candidate.parentId, [...children.get(candidate.parentId) ?? [], candidate.id]);
+      const queue = [element.id];
+      while (queue.length) for (const id of children.get(queue.shift()!) ?? []) if (!descendants.has(id)) { descendants.add(id); queue.push(id); }
       if (!element.implicit) for (let line = element.startLine; line <= element.endLine; line++) remove.add(line);
-      for (const relation of block.relations) if (relation.source === element.id || relation.target === element.id) remove.add(relation.startLine);
+      for (const relation of block.relations) if (descendants.has(relation.source) || descendants.has(relation.target)) remove.add(relation.startLine);
       for (let line = block.startLine + 1; line < block.endLine; line++) {
-        if (parseMemberStatement(code[line])?.owner === element.id) remove.add(line);
+        const owner = parseMemberStatement(code[line])?.owner;
+        if (owner && descendants.has(owner)) remove.add(line);
       }
     }
     return removeLines(remove);

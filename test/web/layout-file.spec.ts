@@ -61,6 +61,24 @@ test('a too-large local file leaves the current diagram intact', async ({ page }
   expect((await download(page)).text).toBe(original);
 });
 
+test('a failed live placement save restores the actual file placement', async ({ page, request }) => {
+  const base = 'http://127.0.0.1:4175';
+  const initial = await (await request.get(`${base}/api/document`)).json();
+  const stored = initial.layouts['diagram-1'].positions.A;
+  await page.goto(base);
+  await expect.poll(() => position(page, 'A')).toEqual(stored);
+  await page.route(`${base}/api/message`, async route => {
+    const message = route.request().postDataJSON();
+    if (message.type === 'layout' && Object.keys(message.layout.positions).length) {
+      await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ type: 'error', message: 'The layout file is read-only.' }) });
+    } else await route.continue();
+  });
+  await drag(page, 'A', 90, 65);
+  await expect(page.getByRole('alert')).toContainText('read-only');
+  await expect.poll(() => position(page, 'A')).toEqual(stored);
+  expect((await (await request.get(`${base}/api/document`)).json()).layouts['diagram-1'].positions.A).toEqual(stored);
+});
+
 test('placements live in the layout file and share one undo history with source edits', async ({ page, request }) => {
   const base = 'http://127.0.0.1:4175', fixture = resolve('.cache/live-sync/placed.puml'), layoutPath = fixture + '.layout.json';
   const sourceBefore = await readFile(fixture, 'utf8'), layoutBefore = await readFile(layoutPath, 'utf8');

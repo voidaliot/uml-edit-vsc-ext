@@ -144,6 +144,36 @@ test('multiple diagrams are independently edited without changing surrounding so
   await expect(await source(page)).toHaveValue(original.trimEnd());
 });
 
+test('reopening source on another diagram retains the unsaved draft and its original target', async ({ page }) => {
+  const second = '@startuml\nclass Second\n@enduml';
+  await loadSource(page, original + '\n' + second);
+  const editor = await source(page);
+  const draft = original.trimEnd().replace('"Order" as Order', '"Draft purchase" as Order');
+  await editor.fill(draft);
+  await page.getByRole('button', { name: 'Close source editor' }).click();
+  await page.getByRole('combobox', { name: 'Current diagram' }).selectOption('diagram-2');
+  await page.getByRole('button', { name: 'Edit PlantUML source in canvas' }).click();
+  await expect(editor).toHaveValue(draft);
+  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await page.getByRole('button', { name: 'Close source editor' }).click();
+  await page.getByRole('combobox', { name: 'Current diagram' }).selectOption('diagram-1');
+  await expect(await source(page)).toHaveValue(draft);
+  await page.getByRole('button', { name: 'Close source editor' }).click();
+  await page.getByRole('combobox', { name: 'Current diagram' }).selectOption('diagram-2');
+  await expect(await source(page)).toHaveValue(second);
+});
+
+test('opening a derived relationship retains an existing unsaved source draft', async ({ page }) => {
+  await loadSource(page, original + '\n' + nativeTemplates.find(template => template.kind === 'activity')!.source);
+  const editor = await source(page);
+  const draft = original.trimEnd().replace('"Order" as Order', '"Draft purchase" as Order');
+  await editor.fill(draft);
+  await page.getByRole('button', { name: 'Close source editor' }).click();
+  await page.getByRole('combobox', { name: 'Current diagram' }).selectOption('diagram-2');
+  await page.locator('.edge-label').first().dblclick();
+  await expect(editor).toHaveValue(draft);
+});
+
 test('an external source change rejects a stale inline edit and retains the draft', async ({ page }) => {
   await loadSource(page);
   await page.locator('.uml-node[data-element-id="Order"] .node-name').dblclick();

@@ -1,6 +1,6 @@
 name: Release
 # Every push to main is tested. When package.json carries a version that has no
-# v<version> tag yet, the extension is packaged and published as a GitHub release.
+# v<version> tag yet, one VSIX is published to both registries and GitHub.
 on:
   push:
     branches: [main]
@@ -15,6 +15,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   release:
+    if: github.ref == 'refs/heads/main'
     needs: ci
     runs-on: ubuntu-latest
     permissions:
@@ -28,7 +29,8 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null &&
+             [ "$(git rev-list -n 1 "v$version")" != "$GITHUB_SHA" ]; then
             echo "v$version is already tagged; nothing to release."
             echo "new=false" >> "$GITHUB_OUTPUT"
           else
@@ -40,31 +42,56 @@ jobs:
           node-version: '22'
           cache: npm
       - if: steps.version.outputs.new == 'true'
-        name: Package the extension
-        run: |
-          npm ci
-          npx vsce package --no-dependencies --out "aliot-uml-editor-${{ steps.version.outputs.version }}.vsix"
-      - if: steps.version.outputs.new == 'true'
         name: Release notes from the changelog
         run: |
+          mkdir -p .cache
           awk -v version="${{ steps.version.outputs.version }}" '
             /^## / { if (found) exit; found = index($0, "## " version " ") == 1 || $0 == "## " version; next }
             found
-          ' CHANGELOG.md > release-notes.md
-          if [ ! -s release-notes.md ]; then
+          ' CHANGELOG.md > .cache/release-notes.md
+          if [ ! -s .cache/release-notes.md ]; then
             echo "::error::CHANGELOG.md has no section for ${{ steps.version.outputs.version }}."
             exit 1
           fi
+      - if: steps.version.outputs.new == 'true'
+        name: Check publishing credentials
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          test -n "$VSCE_PAT" || { echo "::error::VSCE_PAT is not configured."; exit 1; }
+          test -n "$OVSX_PAT" || { echo "::error::OVSX_PAT is not configured."; exit 1; }
+      - if: steps.version.outputs.new == 'true'
+        name: Package the extension
+        run: |
+          npm ci
+          npx --no-install vsce package --no-dependencies --out "aliot-uml-editor-${{ steps.version.outputs.version }}.vsix"
       - if: steps.version.outputs.new == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: aliot-uml-editor-${{ steps.version.outputs.version }}
           path: aliot-uml-editor-${{ steps.version.outputs.version }}.vsix
+          overwrite: true
+      - if: steps.version.outputs.new == 'true'
+        name: Publish to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --no-install vsce publish --packagePath "aliot-uml-editor-${{ steps.version.outputs.version }}.vsix" --skip-duplicate
+      - if: steps.version.outputs.new == 'true'
+        name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --no-install ovsx publish "aliot-uml-editor-${{ steps.version.outputs.version }}.vsix" --skip-duplicate
       - if: steps.version.outputs.new == 'true'
         name: Tag and publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "v$VERSION" "aliot-uml-editor-$VERSION.vsix" \
-            --target "$GITHUB_SHA" --title "v$VERSION" --notes-file release-notes.md
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" "aliot-uml-editor-$VERSION.vsix" --clobber
+            gh release edit "v$VERSION" --draft=false --title "v$VERSION" --notes-file .cache/release-notes.md
+          else
+            gh release create "v$VERSION" "aliot-uml-editor-$VERSION.vsix" \
+              --target "$GITHUB_SHA" --title "v$VERSION" --notes-file .cache/release-notes.md
+          fi

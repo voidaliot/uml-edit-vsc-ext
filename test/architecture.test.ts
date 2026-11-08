@@ -33,6 +33,18 @@ describe('native architecture families', () => {
       const block = parseDocument(source).diagrams[1]; expect(block.kind).toBe(template.kind); expect(block.graphical).toBe(true);
       const changed = applyDiagramEdit(source, block.id, { type: 'rename', elementId: block.elements[0].id, name: 'Updated' }); expect(changed.startsWith(prefix)).toBe(true); expect(changed.endsWith(suffix)).toBe(true); expect(parseDocument(changed).diagrams[1].elements.some(e => e.name === 'Updated')).toBe(true);
     });
+    it(`inserts ${template.kind} before an uppercase closing marker with marker-like comments`, () => {
+      const prefix = '@startuml\nclass Before\n@enduml\n\n', suffix = '\n@startuml\nclass After\n@enduml\n';
+      const middle = template.source.replace(/^@end\w+/m, marker => marker.toUpperCase() + " ' @enddecoy");
+      const source = prefix + middle + suffix;
+      const updated = applyDiagramEdit(source, 'diagram-2', { type: 'addElement', kind: template.palette[0], name: 'Added item' });
+      expect(updated.startsWith(prefix)).toBe(true);
+      expect(updated.endsWith(suffix)).toBe(true);
+      const block = parseDocument(updated).diagrams[1];
+      expect(block.graphical, block.warnings.join('\n')).toBe(true);
+      expect(block.elements.some(element => element.name === 'Added item' || element.members.some(member => member === 'curve1.title = Added item'))).toBe(true);
+      expect(updated).toContain(middle.trimEnd().split('\n').at(-1));
+    });
   }
   it('keeps C4 aliases, quoted punctuation and untouched description during rename', () => {
     const source = '@startuml\n!include <C4/C4_Container>\nContainer(api, "API, v1", "TypeScript", "Keeps (details)") \' note\n@enduml';
@@ -79,6 +91,12 @@ describe('native architecture families', () => {
   });
   it('removes external C4 edges to descendants when a boundary is deleted', () => {
     const source = architectureFamily.templates.find(t => t.kind === 'c4')!.source; const updated = edit(source, 'c4', { type: 'deleteElement', elementId: 'library' }); expect(parse(updated, 'c4').elements.map(e => e.id)).toEqual(['reader']); expect(parse(updated, 'c4').relations).toHaveLength(0);
+  });
+  it('rejects boundary detail edits instead of replacing their child declarations', () => {
+    for (const [body, kind] of [['System_Boundary(group, "Group") {\nContainer(child, "Child", "Type", "Description")\n}', 'c4'], ['Grouping(group, "Group") {\nBusiness_Process(child, "Child")\n}', 'archimate']] as const) {
+      const source = `@startuml\n${body}\n@enduml`;
+      expect(() => edit(source, kind, { type: 'members', elementId: 'group', members: ['Description'] })).toThrow(/no editable detail fields/);
+    }
   });
   it('recognizes known architecture libraries but blocks unknown semantic includes and macros', () => {
     expect(parse('@startuml\n!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml\nPerson(a,"A")\n@enduml','c4').graphical).toBe(true);

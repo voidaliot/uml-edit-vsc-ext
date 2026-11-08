@@ -55,6 +55,7 @@ export function App() {
   docRef.current = documentState;
   const positions = useRef<Record<string, Record<string, ElementPlacement>>>({});
   const dragStart = useRef<{ diagramId: string; version: number; positions: Record<string, Point> } | undefined>(undefined);
+  const keyboardPlacement = useRef<{ diagramId: string; version: number; positions: Record<string, Point> } | undefined>(undefined);
   const pendingPlacement = useRef<{ diagramId: string; knownIds: Set<string>; point: Point } | undefined>(undefined);
   const pendingEdit = useRef<{ expectedSource: string; version: number; resolve: (applied: boolean) => void; timer: number } | undefined>(undefined);
   const lastScene = useRef('');
@@ -83,7 +84,7 @@ export function App() {
       else if (message.type === 'documentOpened') {
         relayoutFit.current = undefined;
         if (pendingEdit.current) { window.clearTimeout(pendingEdit.current.timer); pendingEdit.current.resolve(false); pendingEdit.current = undefined; }
-        lastScene.current = ''; pendingPlacement.current = undefined; dragStart.current = undefined;
+        lastScene.current = ''; pendingPlacement.current = undefined; dragStart.current = undefined; keyboardPlacement.current = undefined;
         setNodes([]); setEdges([]); setActiveId('diagram-1'); setSelectedId(undefined); setMenu(undefined);
         setElementDraft(undefined); setRelationDraft(undefined); setSourceOpen(false); setSourceRequested(false); setSourceDraft(''); setSourceBase(''); setSourceDiagram('');
         setShowGallery(false); setError(''); setBusy(null); setApplyingEdit(false);
@@ -136,7 +137,7 @@ export function App() {
   const editRelation = useCallback((relation: DiagramRelation) => {
     if (!diagram || !documentState) return;
     if (derivedRelations) {
-      setSourceDraft(diagram.source); setSourceBase(diagram.source); setSourceVersion(documentState.version); setSourceDiagram(diagram.id); setSourceOpen(true); setMenu(undefined); return;
+      setSourceRequested(true); setMenu(undefined); return;
     }
     setRelationDraft({ ...relation, relationId: relation.id, version: documentState.version, diagramId: diagram.id });
     setMenu(undefined);
@@ -301,7 +302,7 @@ export function App() {
   const openSource = () => {
     if (!documentState) return;
     const id = diagram?.id ?? 'document', content = diagram?.source ?? documentState.source;
-    if (sourceDiagram !== id || (!sourceOpen && sourceDraft === sourceBase)) { setSourceDraft(content); setSourceBase(content); setSourceVersion(documentState.version); setSourceDiagram(id); }
+    if (sourceDraft === sourceBase && (sourceDiagram !== id || !sourceOpen)) { setSourceDraft(content); setSourceBase(content); setSourceVersion(documentState.version); setSourceDiagram(id); }
     setSourceOpen(true); setMenu(undefined);
   };
   useEffect(() => {
@@ -389,26 +390,50 @@ export function App() {
   };
 
   const sourceTarget = sourceDiagram === 'document' ? documentState?.source : parsed.diagrams.find(block => block.id === sourceDiagram)?.source;
-  const changeNodes = (changes: NodeChange<FlowNode>[]) => setNodes(previous => {
-    const adjusted = changes.map(change => {
-      if (change.type !== 'position' || !change.position) return change;
-      const node = previous.find(node => node.id === change.id);
-      return { ...change, position: { x: node?.data.element.meta?.lockX ? node.position.x : change.position.x, y: diagram?.kind === 'sequence' && node?.data.element.kind !== 'sequence-divider' ? node?.position.y ?? change.position.y : change.position.y } };
-    });
-    let next = applyNodeChanges(adjusted, previous);
-    for (const change of adjusted) {
-      if (change.type !== 'position' || !change.position) continue;
-      const parent = previous.find(node => node.id === change.id);
-      if (!parent?.data.element.meta?.container || parent.data.element.kind.startsWith('sequence-')) continue;
-      const descendants = new Set([parent.id]);
-      const children = new Map<string, string[]>();
-      for (const child of previous) if (child.data.element.parentId) children.set(child.data.element.parentId, [...children.get(child.data.element.parentId) ?? [], child.id]);
-      const queue = [parent.id];
-      while (queue.length) for (const id of children.get(queue.shift()!) ?? []) if (!descendants.has(id)) { descendants.add(id); queue.push(id); }
-      next = next.map(node => node.id !== parent.id && descendants.has(node.id) ? { ...node, position: { x: node.position.x + change.position!.x - parent.position.x, y: node.position.y + change.position!.y - parent.position.y } } : node);
+  const changeNodes = (changes: NodeChange<FlowNode>[]) => {
+    // Keyboard nudges finish without a drag-stop event. Capture their baseline
+    // before React Flow's changes are applied, then persist after the render.
+    if (!dragStart.current && diagram && documentState && changes.some(change => change.type === 'position' && change.position && change.dragging === false)) {
+      keyboardPlacement.current = { diagramId: diagram.id, version: documentState.version, positions: Object.fromEntries(nodes.map(node => [node.id, { ...node.position }])) };
     }
-    return next;
-  });
+    setNodes(previous => {
+      const adjusted = changes.map(change => {
+        if (change.type !== 'position' || !change.position) return change;
+        const node = previous.find(node => node.id === change.id);
+        return { ...change, position: { x: node?.data.element.meta?.lockX ? node.position.x : change.position.x, y: diagram?.kind === 'sequence' && node?.data.element.kind !== 'sequence-divider' ? node?.position.y ?? change.position.y : change.position.y } };
+      });
+      const originals = new Map(previous.map(node => [node.id, node]));
+      const moved = new Map(adjusted.flatMap(change => change.type === 'position' && change.position ? [[change.id, change.position] as const] : []));
+      return applyNodeChanges(adjusted, previous).map(node => {
+        // React Flow already moves every selected node. Only inherit a movement
+        // for unselected descendants, from their nearest explicitly moved parent.
+        if (moved.has(node.id)) return node;
+        const visited = new Set([node.id]);
+        let parentId = node.data.element.parentId;
+        while (parentId && !visited.has(parentId)) {
+          visited.add(parentId);
+          const parent = originals.get(parentId), point = moved.get(parentId);
+          if (!parent) break;
+          if (point && parent.data.element.meta?.container && !parent.data.element.kind.startsWith('sequence-')) {
+            return { ...node, position: { x: node.position.x + point.x - parent.position.x, y: node.position.y + point.y - parent.position.y } };
+          }
+          parentId = parent.data.element.parentId;
+        }
+        return node;
+      });
+    });
+  };
+  useEffect(() => {
+    const started = keyboardPlacement.current;
+    if (!started) return;
+    keyboardPlacement.current = undefined;
+    if (started.diagramId !== diagram?.id || started.version !== docRef.current?.version) return;
+    const movedIds = nodes.filter(node => {
+      const before = started.positions[node.id];
+      return before && (Math.abs(node.position.x - before.x) > .01 || Math.abs(node.position.y - before.y) > .01);
+    }).map(node => node.id);
+    if (movedIds.length) persistLayout(undefined, movedIds);
+  }, [nodes, diagram?.id, persistLayout]);
   const sourceTargetLabel = sourceDiagram === 'document' ? 'Document' : parsed.diagrams.find(block => block.id === sourceDiagram)?.title ?? sourceDiagram;
   const sourceChanged = documentState && sourceVersion !== documentState.version && sourceDraft !== sourceTarget;
   return <div className="app-shell">

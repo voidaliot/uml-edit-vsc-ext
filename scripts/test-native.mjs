@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -8,9 +8,13 @@ import { runTests } from '@vscode/test-electron';
 // Every mutable VS Code directory is scoped to this repository's ignored cache.
 const root = resolve('.');
 const nativeRoot = resolve('.cache/native');
-const workspace = join(nativeRoot, 'workspace');
-const profile = join(nativeRoot, 'user-data');
-const extensions = join(nativeRoot, 'extensions');
+await mkdir(nativeRoot, { recursive: true });
+// A failed run may leave dirty editors in its profile. Start every run with
+// fresh fixtures and view state, rather than restoring that previous session.
+const nativeRun = await mkdtemp(join(nativeRoot, 'run-'));
+const workspace = join(nativeRun, 'workspace');
+const profile = join(nativeRun, 'user-data');
+const extensions = join(nativeRun, 'extensions');
 await Promise.all([workspace, profile, extensions].map(path => mkdir(path, { recursive: true })));
 await writeFile(join(workspace, 'smoke.puml'), '@startuml\ntitle Native editor smoke\nclass Customer {\n  +name: String\n}\nclass Order\nCustomer "1" --> "*" Order : places\n@enduml\n');
 if (process.argv.includes('--host-only')) {
