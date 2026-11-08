@@ -77,7 +77,14 @@ export function parseActivities(block: DiagramBlock, lines: string[], directive:
     if (/^(fork again|split again)$/i.test(text)) { const frame = frames.at(-1); if (!frame || !['fork', 'split'].includes(frame.type)) { bad(line, text); continue; } if (tail) frame.ends.push(tail); tail = frame.head; continue; }
     if (/^end\s*(fork|split)(?:\s+\{.*)?$/i.test(text) || /^end\s+merge$/i.test(text)) { const frame = frames.pop(); if (!frame || !['fork', 'split'].includes(frame.type)) { bad(line, text); continue; } if (tail) frame.ends.push(tail); tail = undefined; const id = add('', frame.type === 'fork' ? 'join' : 'merge', line); for (const endpoint of frame.ends) edge(endpoint, id, '', line); continue; }
     const linkLabel = text.match(/^->\s*(.*);$/); if (linkLabel) { label = linkLabel[1]; continue; }
-    if (/^note\s/i.test(text)) { const start = line; let name = text.includes(':') ? text.slice(text.indexOf(':') + 1).trim() : ''; if (!name) { while (++line < block.endLine && !/^\s*end\s*note/i.test(lines[line])) name += (name ? '\n' : '') + lines[line].trim(); } block.elements.push({ id: `activity-note-${start}`, name, kind: 'note', members: [], startLine: start, endLine: line, meta: { note: true, attachTo: tail } }); continue; }
+    if (/^note\s/i.test(text)) {
+      const start = line; let name = text.includes(':') ? text.slice(text.indexOf(':') + 1).trim() : '';
+      if (!text.includes(':')) {
+        while (++line < block.endLine && !/^\s*end\s*note\b/i.test(lines[line])) name += (name ? '\n' : '') + lines[line].trim();
+        if (line >= block.endLine) { bad(start, 'Unclosed activity note; add end note before the diagram ends.'); break; }
+      }
+      block.elements.push({ id: `activity-note-${start}`, name, kind: 'note', members: [], startLine: start, endLine: line, meta: { note: true, attachTo: tail } }); continue;
+    }
     if (/^<<#?\w+>>$/.test(text)) continue;
     bad(line, text);
   }

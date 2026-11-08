@@ -31,11 +31,11 @@ Add native support by extending `src/core/coverage.ts`, detection/projection, so
 
 Run `npm run check` and `npm run test:web` before contributing. For parser/template changes run `npm run test:corpus`. The corpus command reports native coverage of external inputs without copying them or executing their contents. Unsupported input is reported as a coverage gap, never counted as rendered.
 
-The extension is published as `voidaliot.aliot-uml-editor` from https://github.com/voidaliot/uml-edit-vsc-ext. `npm run package` builds the VSIX only; publishing (`vsce publish` or a Marketplace upload) is a separate, manual step by the project owner.
+The extension is published as `voidaliot.aliot-uml-editor` from https://github.com/voidaliot/uml-edit-vsc-ext. `npm run package` builds the VSIX only; merging a new version to `main` publishes it through the Release workflow.
 
 ## Releases
 
-Every push to `main` runs the Release workflow (`.github/workflows/release.yml`), which first runs the full CI. When the `version` in `package.json` has no `v<version>` tag yet, it packages the VSIX, tags the commit as `v<version>` and publishes a GitHub release with the VSIX attached and the matching `CHANGELOG.md` section as notes. A missing changelog section fails the release. To release, bump the version, add its changelog section, and merge to `main`; a merge without a version bump only runs CI. Marketplace publishing stays manual.
+Every push to `main` runs the Release workflow (`.github/workflows/release.yml`), which first runs the full CI. When the `version` in `package.json` has no `v<version>` tag yet, it packages one VSIX, publishes it to Visual Studio Marketplace and Open VSX, then tags the commit and creates a GitHub release with that same VSIX and the matching `CHANGELOG.md` section as notes. Repository secrets `VSCE_PAT` and `OVSX_PAT` must be configured. Missing credentials or release notes fail before publication. To release, bump the version, add its changelog section, and merge to `main`; a merge without a version bump only runs CI. Rerun a failed Release workflow to resume partial publication: both registries skip an already published version, and an existing tag on the same commit permits recovery if creating the GitHub release failed. Manual dispatch publishes only from `main`.
 
 ## README screenshots
 
@@ -45,4 +45,4 @@ The README uses relative image and documentation links. `vsce` rewrites them aga
 
 ## Packaging dependencies
 
-The packaging CLI's Azure authentication chain is constrained to `@azure/identity` 4.13.0 and `uuid` 11.1.1 to avoid the audited MSAL 5–7.0 authorization advisory and the old UUID buffer bounds advisory. These are development-only dependencies and are excluded from the VSIX. Revisit these pins when the upstream packaging dependency adopts a patched compatible MSAL release. Local packaging is tested; marketplace authentication is not exercised by this repository's tests.
+The packaging CLI's Azure authentication chain is constrained to `@azure/identity` 4.13.0 and `uuid` 11.1.1 to avoid the audited MSAL 5–7.0 authorization advisory and the old UUID buffer bounds advisory. Its `minimatch` dependency is constrained to 11.0.1 to address glob amplification (GHSA-g3hv-75wg-m249). These are development-only dependencies and are excluded from the VSIX. Revisit these pins when the upstream packaging dependencies adopt patched compatible releases. Local packaging is tested; registry credentials are exercised only by the Release workflow.

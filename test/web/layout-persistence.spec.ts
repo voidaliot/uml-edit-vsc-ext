@@ -131,3 +131,44 @@ test('a multiple selection drag persists only the selected moved nodes', async (
   await expect.poll(async () => Object.keys((await latestLayout(page)).positions).sort()).toEqual(['A', 'B']);
   expect(Object.hasOwn((await latestLayout(page)).positions, 'C')).toBe(false);
 });
+
+test('keyboard placement survives a source update without freezing other nodes', async ({ page }) => {
+  await openDocument(page);
+  const node = page.locator('.react-flow__node[data-id="A"]');
+  await node.locator('.node-title').click();
+  const before = await position(page, 'A');
+  await node.press('ArrowRight');
+  const moved = await position(page, 'A');
+  expect(moved.x).toBeGreaterThan(before.x);
+  await expect.poll(async () => (await latestLayout(page)).positions.A).toEqual(moved);
+  const changed = initial.replace('class B', 'class B\nclass C');
+  await updateSource(page, changed, 2);
+  await expect.poll(() => position(page, 'A')).toEqual(moved);
+  expect(Object.keys((await latestLayout(page)).positions)).toEqual(['A']);
+});
+
+test('dragging selected nested containers moves every descendant exactly once', async ({ page }) => {
+  const source = '@startuml\npackage "Domain" as Domain {\n package "Orders" as Orders {\n  class "Item" as Item\n }\n}\nclass Other\n@enduml\n';
+  await openDocument(page, source);
+  await page.locator('.react-flow__node[data-id="Domain"] .node-title').click();
+  await page.keyboard.down('Control');
+  await page.locator('.react-flow__node[data-id="Orders"] .node-title').click();
+  await page.keyboard.up('Control');
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2);
+  const before = Object.fromEntries(await Promise.all(['Domain', 'Orders', 'Item'].map(async id => [id, await position(page, id)])));
+  await page.locator('.react-flow__node[data-id="Domain"]').press('ArrowRight');
+  const stepped = await position(page, 'Domain');
+  const step = stepped.x - before.Domain.x;
+  expect(step).toBeGreaterThan(0);
+  for (const id of ['Orders', 'Item']) expect((await position(page, id)).x - before[id].x).toBeCloseTo(step, 1);
+  await drag(page, page.locator('.react-flow__node[data-id="Domain"]'));
+  const moved = await position(page, 'Domain');
+  const delta = { x: moved.x - before.Domain.x, y: moved.y - before.Domain.y };
+  expect(delta.x).toBeGreaterThan(40);
+  for (const id of ['Orders', 'Item']) {
+    const after = await position(page, id);
+    expect(after.x - before[id].x).toBeCloseTo(delta.x, 1);
+    expect(after.y - before[id].y).toBeCloseTo(delta.y, 1);
+  }
+  await expect.poll(async () => Object.keys((await latestLayout(page)).positions).sort()).toEqual(['Domain', 'Item', 'Orders']);
+});

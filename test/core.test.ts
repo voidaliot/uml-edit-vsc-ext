@@ -235,6 +235,12 @@ describe('narrow graphical source edits', () => {
     expect(updated).toBe(uml('class B\nB: retain'));
     expect(() => applyDiagramEdit(source, 'diagram-1', { type: 'members', elementId: 'A', members: ['changed'] })).toThrow(/separate member/);
   });
+  it('removes external shorthand members of deleted container descendants', () => {
+    const source = uml('package P {\n  package Q {\n    class Item\n  }\n}\nclass Other\nItem: field\nQ: description\nItem --> Other\nOther: retain');
+    const updated = applyDiagramEdit(source, 'diagram-1', { type: 'deleteElement', elementId: 'P' });
+    expect(updated).toBe(uml('class Other\nOther: retain'));
+    expect(parseDocument(updated).diagrams[0].elements.map(element => element.id)).toEqual(['Other']);
+  });
   it('refuses potentially destructive edits when unknown references exist', () => {
     expect(() => applyDiagramEdit(uml('class A\n!include custom.puml'), 'diagram-1', { type: 'deleteElement', elementId: 'A' })).toThrow(/advanced syntax/);
     expect(() => applyDiagramEdit(uml('class A'), 'diagram-1', { type: 'members', elementId: 'A', members: ['}\n!include secret'] })).toThrow();

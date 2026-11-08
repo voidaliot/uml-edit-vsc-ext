@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 — 2026-11-08
+
+- Releases now publish the same tested VSIX to Visual Studio Marketplace, Open VSX and GitHub automatically when a new version reaches `main`. Failed publishing runs can be retried without duplicating registry versions.
+- Failed layout-file writes and deletions retain the last saved placement and undo/redo history. Identical moves and history operations can be retried after the filesystem recovers, and the canvas restores the saved placement on failure.
+- Companion layout files move only after their PlantUML file has been renamed successfully, so failed or canceled renames retain the original layout.
+- Reopening the source editor after switching diagrams preserves an unsaved draft and its original target. Moving selected nested containers moves their descendants exactly once, and keyboard placement is saved without freezing untouched elements.
+- Architecture insertions preserve uppercase diagram terminators and comments containing marker-like text. Editing C4 and ArchiMate boundary details is rejected to protect child declarations.
+- Unterminated UML, sequence and activity notes are reported without exposing the diagram terminator to visual edits. Empty inline activity notes retain subsequent actions, and deleting a UML group also removes external member references to its descendants.
+- Native VS Code persistence regressions run in CI. Patched the packaging tools' glob dependency; the dependency audit reports no vulnerabilities.
+
 ## 0.5.0 — 2026-10-27
 
 - PlantUML files stay plain PlantUML. Manual positions and sizes are saved automatically to a companion layout file, `<diagram>.puml.layout.json`, written one element per line, created only when something is placed manually and removed by **Re-layout**. Pan and zoom stay in the VS Code workspace.

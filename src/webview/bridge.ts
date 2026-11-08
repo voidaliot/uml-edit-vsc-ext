@@ -142,6 +142,17 @@ export function send(message: WebviewMessage): void {
         if (epoch === connectionEpoch) {
           if (message.type === 'layout') pendingLayouts.delete(message);
           emit({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+          if (message.type === 'layout') {
+            // A rejected drag must not remain as an apparent saved placement.
+            // Reapply newer queued movements over the authoritative snapshot.
+            try {
+              const current = await fetch('/api/document', { cache: 'no-store' });
+              if (current.ok) {
+                const snapshot = await current.json() as HostMessage;
+                if (epoch === connectionEpoch && snapshot.type === 'document') acceptPreviewMessage(snapshot);
+              }
+            } catch { /* Keep the save error visible while the connection recovers. */ }
+          }
         }
       }
     });

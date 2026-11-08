@@ -218,6 +218,7 @@ function parseGraph(block: DiagramBlock, lines: string[]): void {
     if (note && block.kind !== 'sequence') {
       const first = line; let name = note[4] ?? '';
       if (note[4] === undefined) while (++line < block.endLine && !/^\s*end\s*[hr]?note\b/i.test(lines[line])) name += (name ? '\n' : '') + lines[line].trim();
+      if (line >= block.endLine) { unsupported(block, first, 'Unclosed note; add end note before the diagram ends.'); break; }
       const id = note[3] ?? `note-${first}`;
       elements.set(id, { id, name, kind: 'note', members: [], startLine: first, endLine: line, ...(containers.length ? { parentId: containers.at(-1)!.id } : {}), meta: { annotation: true, multiline: note[4] === undefined, attachTo: note[2]?.trim() } });
       continue;

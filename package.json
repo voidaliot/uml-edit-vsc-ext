@@ -2,7 +2,7 @@
   "name": "aliot-uml-editor",
   "displayName": "Aliot UML Editor",
   "description": "Native React Flow UML diagrams with bidirectional editing of PlantUML text files.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "voidaliot",
   "license": "MIT",
   "preview": true,
@@ -172,13 +172,17 @@
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
+    "ovsx": "1.3.0",
     "sharp": "0.35.5",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
   "overrides": {
     "@azure/identity": "4.13.0",
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "@vscode/vsce": {
+      "minimatch": "11.0.1"
+    }
   },
   "type": "module",
   "galleryBanner": {

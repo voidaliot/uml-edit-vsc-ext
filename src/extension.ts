@@ -93,7 +93,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         for (const session of this.sessions) if (session.document.uri.toString() === key) this.sendDocument(session);
       }),
       // Keep the layout file beside its diagram when the diagram is renamed, moved or deleted in VS Code.
-      vscode.workspace.onWillRenameFiles(event => event.waitUntil(this.moveLayoutFiles(event.files.map(file => [file.oldUri, file.newUri])))),
+      vscode.workspace.onDidRenameFiles(event => { void this.moveLayoutFiles(event.files.map(file => [file.oldUri, file.newUri])); }),
       vscode.workspace.onDidDeleteFiles(event => { void this.moveLayoutFiles(event.files.map(file => [file, undefined])); }),
     );
   }
@@ -117,7 +117,12 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     const localSubscriptions: vscode.Disposable[] = [];
     localSubscriptions.push(panel.webview.onDidReceiveMessage((message: unknown) => {
       if (!validWebviewMessage(message)) { void this.post(session, { type: 'error', message: 'The editor sent an invalid request. Reload the editor to recover.' }); return; }
-      void this.handleMessage(session, message).catch(error => this.post(session, { type: 'error', message: errorMessage(error) }));
+      void this.handleMessage(session, message).catch(async error => {
+        await this.post(session, { type: 'error', message: errorMessage(error) });
+        // Placement is optimistic in the webview; restore the persisted snapshot
+        // when the filesystem rejected a move, resize, clear or history step.
+        if (message.type === 'layout' || message.type === 'undo' || message.type === 'redo') this.sendDocument(session);
+      });
     }));
     localSubscriptions.push(panel.onDidChangeViewState(event => {
       if (event.webviewPanel.active) this.activeSession = session;
@@ -188,11 +193,12 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
           this.scheduleViewports(document.uri, state);
           if (!samePositions(current, layout.positions)) {
             const step: LayoutStep = { diagramId: id, before: state.positions[id]?.positions, after: copyPositions(layout.positions), sourceText: document.getText() };
+            const positions = withPositions(state.positions, id, step.after);
+            await this.writeLayoutFile(state, positions);
+            state.positions = positions;
             state.undo.push(step);
             if (state.undo.length > MAX_LAYOUT_HISTORY) state.undo.shift();
             state.redo.length = 0;
-            setPositions(state, id, step.after);
-            await this.writeLayoutFile(state);
           }
           // The dragging panel already shows this placement.
           for (const peer of this.sessions) if (peer !== session && peer.document.uri.toString() === document.uri.toString()) this.sendDocument(peer);
@@ -241,10 +247,13 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
   }
 
   private async applyStep(document: vscode.TextDocument, state: LayoutState, direction: 'undo' | 'redo'): Promise<void> {
-    const step = (direction === 'undo' ? state.undo : state.redo).pop()!;
+    const stack = direction === 'undo' ? state.undo : state.redo;
+    const step = stack.at(-1)!;
+    const positions = withPositions(state.positions, step.diagramId, direction === 'undo' ? step.before : step.after);
+    await this.writeLayoutFile(state, positions);
+    state.positions = positions;
+    stack.pop();
     (direction === 'undo' ? state.redo : state.undo).push(step);
-    setPositions(state, step.diagramId, direction === 'undo' ? step.before : step.after);
-    await this.writeLayoutFile(state);
     this.broadcast(document.uri);
   }
 
@@ -299,16 +308,17 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     if (state.error) for (const session of this.sessions) if (session.document.uri.toString() === document.uri.toString()) void this.post(session, { type: 'error', message: state.error });
   }
 
-  private async writeLayoutFile(state: LayoutState): Promise<void> {
+  private async writeLayoutFile(state: LayoutState, positions: Layouts): Promise<void> {
     if (!state.file) return;
-    const text = serializeLayoutFile(state.positions) ?? null;
+    const text = serializeLayoutFile(positions) ?? null;
     if (text === state.written) return;
-    state.written = text;
-    state.error = undefined;
     if (text === null) {
       try { await vscode.workspace.fs.delete(state.file, { useTrash: false }); }
       catch (error) { if (!(error instanceof vscode.FileSystemError && error.code === 'FileNotFound')) throw error; }
     } else await vscode.workspace.fs.writeFile(state.file, new TextEncoder().encode(text));
+    // A failed write must remain retryable and must not consume a history step.
+    state.written = text;
+    state.error = undefined;
   }
 
   private async moveLayoutFiles(files: [vscode.Uri, vscode.Uri | undefined][]): Promise<void> {
@@ -407,9 +417,11 @@ function copyPositions(positions: Positions): Positions {
   return result;
 }
 
-function setPositions(state: LayoutState, diagramId: string, positions: Positions | undefined): void {
-  if (positions && Object.keys(positions).length) state.positions[diagramId] = { positions };
-  else delete state.positions[diagramId];
+function withPositions(current: Layouts, diagramId: string, positions: Positions | undefined): Layouts {
+  const result: Layouts = Object.assign(Object.create(null), current);
+  if (positions && Object.keys(positions).length) result[diagramId] = { positions };
+  else delete result[diagramId];
+  return result;
 }
 
 function samePositions(left: Positions, right: Positions): boolean {

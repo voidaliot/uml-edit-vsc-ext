@@ -53,4 +53,20 @@ describe('native UML control and grouping semantics', () => {
       expect(parseDocument(incomplete).diagrams[0].graphical, template.kind).toBe(false);
     }
   });
+  it.each(['class A\nnote right of A\nUnclosed', 'participant A\nnote over A\nUnclosed', 'start\n:A;\nnote right\nUnclosed'])('keeps unterminated notes out of editable source spans: %s', body => {
+    const first = uml(body), suffix = '\n' + uml('class Adjacent');
+    const parsed = parseDocument(first + suffix);
+    expect(parsed).toHaveProperty('diagrams.length', 2);
+    expect(parsed.diagrams[0].graphical).toBe(false);
+    expect(parsed.diagrams[0].warnings.join('\n')).toMatch(/Unclosed.*note/);
+    expect(parsed.diagrams[0].elements.every(element => element.endLine < parsed.diagrams[0].endLine)).toBe(true);
+    expect(parsed.diagrams[1].elements[0].id).toBe('Adjacent');
+    expect(() => applyDiagramEdit(first + suffix, 'diagram-1', { type: 'deleteElement', elementId: parsed.diagrams[0].elements.find(element => element.name === 'A')!.id })).toThrow(/advanced syntax/);
+  });
+  it('keeps empty inline activity notes on their own line', () => {
+    const block = parse('start\n:A;\nnote right:\n:B;\nstop');
+    expect(block.graphical, block.warnings.join('\n')).toBe(true);
+    expect(block.elements.find(element => element.kind === 'note')).toMatchObject({ name: '', startLine: 3, endLine: 3 });
+    expect(block.elements.some(element => element.name === 'B')).toBe(true);
+  });
 });

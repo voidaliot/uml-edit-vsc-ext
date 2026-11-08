@@ -115,3 +115,92 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
   await eventually(async () => await read(movedLayout) === null, 'Deleting the diagram must remove its layout file.');
   console.log('PASS layout files follow renames and deletes in VS Code');
 }
+
+/** A real registered filesystem lets write failures cross the VS Code API boundary. */
+export async function verifyLayoutWriteFailures(extensionUri: vscode.Uri): Promise<void> {
+  const uri = vscode.Uri.parse(`aliot-layout-failure:/retry-${Date.now()}.puml`);
+  const layoutUri = uri.with({ path: uri.path + '.layout.json' });
+  const files = new Map<string, Uint8Array>([[uri.toString(), new TextEncoder().encode(source)]]);
+  const changes = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+  let failNextOperation = false;
+  const checkFailure = () => {
+    if (failNextOperation) { failNextOperation = false; throw vscode.FileSystemError.Unavailable('Simulated layout persistence failure'); }
+  };
+  const registration = vscode.workspace.registerFileSystemProvider(uri.scheme, {
+    onDidChangeFile: changes.event,
+    watch: () => new vscode.Disposable(() => {}),
+    stat: resource => {
+      if (resource.path === '/') return { type: vscode.FileType.Directory, ctime: 0, mtime: 0, size: 0 };
+      const bytes = files.get(resource.toString());
+      if (!bytes) throw vscode.FileSystemError.FileNotFound(resource);
+      return { type: vscode.FileType.File, ctime: 0, mtime: 0, size: bytes.length };
+    },
+    readDirectory: () => [], createDirectory: () => {},
+    readFile: resource => {
+      const bytes = files.get(resource.toString());
+      if (!bytes) throw vscode.FileSystemError.FileNotFound(resource);
+      return bytes;
+    },
+    writeFile: async (resource, bytes) => { checkFailure(); files.set(resource.toString(), bytes); },
+    delete: async resource => { checkFailure(); files.delete(resource.toString()); },
+    rename: async (from, to) => {
+      // The source rename fails, but sidecar renames would succeed. A provider
+      // must not move the sidecar until the source rename has actually finished.
+      if (!from.path.endsWith('.layout.json')) throw vscode.FileSystemError.Unavailable('Simulated source rename failure');
+      const bytes = files.get(from.toString());
+      if (!bytes) throw vscode.FileSystemError.FileNotFound(from);
+      files.set(to.toString(), bytes); files.delete(from.toString());
+    },
+  }, { isCaseSensitive: true });
+  const provider = new UmlEditorProvider(context(extensionUri)), first = channel();
+  try {
+    const document = await vscode.workspace.openTextDocument(uri);
+    await provider.resolveCustomTextEditor(document, first.panel);
+    first.send({ type: 'ready' });
+    const A = { x: 100, y: 100 }, B = { x: 300, y: 200 };
+    const move = (positions: Record<string, { x: number; y: number }>) => first.send({ type: 'layout', version: document.version, diagramId: 'diagram-1', layout: { positions } });
+    const snapshot = async () => {
+      const before = first.messages.length;
+      first.send({ type: 'ready' });
+      await eventually(() => first.messages.slice(before).some(message => message.type === 'document'), 'The host must return its current persisted layout.');
+      return latest(first.messages).layouts['diagram-1']?.positions;
+    };
+    const expectFailure = async (operation: () => void) => {
+      const before = first.messages.filter(message => message.type === 'error').length;
+      failNextOperation = true;
+      operation();
+      await eventually(() => first.messages.filter(message => message.type === 'error').length > before, 'Filesystem failures must reach the originating panel.');
+    };
+    move({ A });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A }), 'The initial move must persist.');
+    await expectFailure(() => move({ A, B }));
+    assert.equal(JSON.stringify(await snapshot()), JSON.stringify({ A }), 'Failed writes must not change the host layout.');
+    move({ A, B });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'An identical move must retry a failed write.');
+
+    await expectFailure(() => first.send({ type: 'undo' }));
+    assert.equal(JSON.stringify(await snapshot()), JSON.stringify({ A, B }), 'Failed undo writes must leave the current placement intact.');
+    first.send({ type: 'undo' });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A }), 'A failed undo must remain on the undo stack for retry.');
+    await expectFailure(() => first.send({ type: 'redo' }));
+    first.send({ type: 'redo' });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'A failed redo must remain on the redo stack for retry.');
+
+    await expectFailure(() => move({}));
+    assert.equal(JSON.stringify(await snapshot()), JSON.stringify({ A, B }), 'A failed layout deletion must not discard placements.');
+    move({});
+    await eventually(async () => await read(layoutUri) === null, 'An identical clear must retry a failed deletion.');
+    first.send({ type: 'undo' });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'One undo must restore the cleared placements after a successful retry.');
+    console.log('PASS layout write/delete failures preserve placements and undo/redo, and identical retries persist');
+
+    const renamedUri = uri.with({ path: uri.path.replace('.puml', '-renamed.puml') });
+    const rename = new vscode.WorkspaceEdit();
+    rename.renameFile(uri, renamedUri);
+    assert.equal(await vscode.workspace.applyEdit(rename), false, 'The simulated source rename must fail.');
+    assert.ok(files.has(uri.toString()));
+    assert.ok(files.has(layoutUri.toString()), 'A failed source rename must leave its layout beside the original source.');
+    assert.ok(!files.has(renamedUri.with({ path: renamedUri.path + '.layout.json' }).toString()));
+    console.log('PASS failed source renames leave companion layouts in place');
+  } finally { first.close(); provider.dispose(); registration.dispose(); changes.dispose(); }
+}
