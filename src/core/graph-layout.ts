@@ -206,6 +206,75 @@ function compactChains(chains: Chain[], preferred: number[], weights: number[], 
   return values.map((value, index) => value + minimum[index]);
 }
 
+/**
+ * Order every rank so that links between neighbouring ranks cross as little as possible:
+ * barycentre sweeps down and up, keeping the best order seen, then swaps of neighbours
+ * while a swap still removes a crossing. Positions are assigned afterwards and keep this order.
+ */
+function reduceCrossings(layers: Chain[][], links: Link[], crossSize: (id: string) => number): void {
+  if (layers.length < 2) return;
+  const chainOf = new Map<string, Chain>(), layerOf = new Map<Chain, number>(), index = new Map<Chain, number>();
+  layers.forEach((layer, at) => layer.forEach((chain, position) => { layerOf.set(chain, at); index.set(chain, position); for (const id of chain.ids) chainOf.set(id, chain); }));
+  // Where along its chain a link attaches, as a fraction: a row of same-rank boxes or a
+  // container is one slot in its rank, but its links leave from different places along it.
+  const along = (chain: Chain, id: string, offset = 0) => chain.width > 0 ? Math.max(0, Math.min(.999, (chain.offsets.get(id)! + crossSize(id) / 2 + offset) / chain.width)) : .5;
+  // between[i] joins layer i (first of each pair) to layer i + 1.
+  type Pair = [upper: Chain, lower: Chain, upperAt: number, lowerAt: number];
+  const between: Pair[][] = layers.map(() => []);
+  for (const edge of links) {
+    const a = chainOf.get(edge.source), b = chainOf.get(edge.target);
+    if (!a || !b) continue;
+    const from = layerOf.get(a)!, to = layerOf.get(b)!, sourceAt = along(a, edge.source, edge.sourceOffset), targetAt = along(b, edge.target, edge.targetOffset);
+    if (Math.abs(from - to) === 1) between[Math.min(from, to)].push(from < to ? [a, b, sourceAt, targetAt] : [b, a, targetAt, sourceAt]);
+  }
+  if (!between.some(pairs => pairs.length > 1)) return;
+  const crossings = (at: number): number => {
+    const pairs = between[at]; let count = 0;
+    if (!pairs) return 0;
+    for (let a = 0; a < pairs.length; a++) for (let b = a + 1; b < pairs.length; b++) {
+      const upper = index.get(pairs[a][0])! + pairs[a][2] - index.get(pairs[b][0])! - pairs[b][2], lower = index.get(pairs[a][1])! + pairs[a][3] - index.get(pairs[b][1])! - pairs[b][3];
+      if (upper * lower < 0) count++;
+    }
+    return count;
+  };
+  const total = () => between.reduce((sum, _pairs, at) => sum + crossings(at), 0);
+  const place = (at: number, order: Chain[]) => { layers[at] = order; order.forEach((chain, position) => index.set(chain, position)); };
+  // A rank is ordered by where its neighbours sit in the rank that was ordered just before it.
+  const sweep = (at: number, toward: -1 | 1) => {
+    const pairs = between[toward < 0 ? at - 1 : at];
+    if (!pairs?.length) return;
+    const sums = new Map<Chain, { sum: number; count: number }>();
+    for (const [upper, lower, upperAt, lowerAt] of pairs) {
+      const [own, other, otherAt] = toward < 0 ? [lower, upper, upperAt] : [upper, lower, lowerAt], entry = sums.get(own) ?? { sum: 0, count: 0 };
+      entry.sum += index.get(other)! + otherAt; entry.count++; sums.set(own, entry);
+    }
+    const centre = (chain: Chain) => sums.get(chain)!.sum / sums.get(chain)!.count;
+    const linked = layers[at].filter(chain => sums.has(chain)).sort((a, b) => centre(a) - centre(b) || index.get(a)! - index.get(b)!);
+    let next = 0;
+    // Chains without a neighbour on that side keep their slot.
+    place(at, layers[at].map(chain => sums.has(chain) ? linked[next++] : chain));
+  };
+  let best = total(), kept = layers.map(layer => [...layer]);
+  for (let round = 0; round < 12 && best > 0; round++) {
+    for (let at = 1; at < layers.length; at++) sweep(at, -1);
+    for (let at = layers.length - 2; at >= 0; at--) sweep(at, 1);
+    const now = total();
+    if (now < best) { best = now; kept = layers.map(layer => [...layer]); }
+  }
+  kept.forEach((order, at) => place(at, order));
+  // Bounded: each accepted swap removes at least one crossing.
+  for (let round = 0, improved = true; improved && round < 20 && best > 0; round++) {
+    improved = false;
+    for (let at = 0; at < layers.length; at++) for (let position = 0; position + 1 < layers[at].length; position++) {
+      const before = crossings(at - 1) + crossings(at), order = [...layers[at]];
+      [order[position], order[position + 1]] = [order[position + 1], order[position]];
+      const previous = layers[at];
+      place(at, order);
+      if (crossings(at - 1) + crossings(at) < before) improved = true; else place(at, previous);
+    }
+  }
+}
+
 function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>, across: boolean, depth: number): Layout {
   const main = across ? 'x' : 'y', cross = across ? 'y' : 'x';
   const levels = ranks(ids, links, main);
@@ -256,6 +325,9 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
       return { ids: chainIds, offsets, width, start: 0, order };
     }) };
   });
+  const sequence = ordered.map(layer => layer.chains);
+  reduceCrossings(sequence, mainLinks, crossSize);
+  ordered.forEach((layer, at) => { layer.chains = sequence[at]; });
   const points: Record<string, Point> = Object.create(null);
   const bands = new Map<number, { start: number; depth: number }>();
   const broadest = Math.max(0, ...ordered.map(({ chains }) => chains.reduce((sum, chain) => sum + chain.width, 0) + (chains.length - 1) * siblingGap));
@@ -297,7 +369,6 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
   for (let pass = 0; pass < 8; pass++) {
     for (const { chains } of pass % 2 ? [...ordered].reverse() : ordered) {
       const preferences = new Map(chains.map(chain => { const neighbors = attachments(chain); return [chain, { start: chain === anchor || !neighbors.length ? chain.start : median(neighbors), weight: Math.max(1, Math.min(5, neighbors.length)) }]; }));
-      chains.sort((a, b) => preferences.get(a)!.start + a.width / 2 - preferences.get(b)!.start - b.width / 2 || a.order - b.order);
       const starts = compactChains(chains, chains.map(chain => preferences.get(chain)!.start), chains.map(chain => preferences.get(chain)!.weight), chains.includes(anchor!) ? anchor : undefined);
       chains.forEach((chain, index) => {
         chain.start = starts[index];
@@ -305,14 +376,38 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
       });
     }
   }
-  const routes: RouteFragment[] = routed.filter(({ link }) => link.relation).map(({ link, lanes: chain }) => {
-    const bends = chain.flatMap(id => {
-      const band = bands.get(levels.get(id)!)!, at = center(id);
-      const enter = { [main]: band.start, [cross]: at } as unknown as Point, leave = { [main]: band.start + band.depth, [cross]: at } as unknown as Point;
-      const pair = levels.get(link.target)! > levels.get(link.source)! ? [enter, leave] : [leave, enter];
-      return band.depth < 1 ? [pair[0]] : pair;
-    });
-    return { relation: link.relation!, side: link.side ?? 'common', depth, points: link.flipped ? bends.reverse() : bends };
+  const laneBends = new Map(routed.map(({ link, lanes: chain }) => [link, chain.flatMap(id => {
+    const band = bands.get(levels.get(id)!)!, at = center(id);
+    const enter = { [main]: band.start, [cross]: at } as unknown as Point, leave = { [main]: band.start + band.depth, [cross]: at } as unknown as Point;
+    const pair = levels.get(link.target)! > levels.get(link.source)! ? [enter, leave] : [leave, enter];
+    return band.depth < 1 ? [pair[0]] : pair;
+  })]));
+  // A link to a box far along the next rank leaves at a shallow angle and would cut through its own
+  // neighbours. It first steps clear of its rank, crosses in the gap between ranks, then steps in.
+  const solid = (id: string) => !lanes.has(id) && !id.startsWith(phantomPrefix);
+  const cuts = (a: Point, b: Point, rank: number, ends: string[]) => (layers.get(rank) ?? []).some(id => {
+    if (!solid(id) || ends.includes(id)) return false;
+    let from = 0, to = 1;
+    for (const [delta, low, high] of [[b.x - a.x, points[id].x - 4 - a.x, points[id].x + size(id).width + 4 - a.x], [b.y - a.y, points[id].y - 4 - a.y, points[id].y + size(id).height + 4 - a.y]]) {
+      if (Math.abs(delta) < 1e-9) { if (low >= 0 || high <= 0) return false; continue; }
+      from = Math.max(from, Math.min(low / delta, high / delta)); to = Math.min(to, Math.max(low / delta, high / delta));
+      if (from >= to) return false;
+    }
+    return true;
+  });
+  const clearance = Math.min(18, gap / 4);
+  const routes: RouteFragment[] = links.filter(link => link.axis === main && link.relation && levels.get(link.source) !== levels.get(link.target)).flatMap(link => {
+    const down = levels.get(link.target)! > levels.get(link.source)!, ends = [link.source, link.target], bends = [...laneBends.get(link) ?? []];
+    const at = (id: string, offset = 0) => ({ [main]: points[id][main] + mainSize(id) / 2, [cross]: center(id) + offset }) as unknown as Point;
+    const beside = (id: string, point: Point, leaving: boolean) => { const band = bands.get(levels.get(id)!)!; return { [main]: leaving === down ? band.start + band.depth + clearance : band.start - clearance, [cross]: point[cross] } as unknown as Point; };
+    const start = at(link.source, link.sourceOffset), end = at(link.target, link.targetOffset);
+    const leaving = (toward: Point) => solid(link.source) && cuts(start, toward, levels.get(link.source)!, ends) ? beside(link.source, start, true) : undefined;
+    let leave = leaving(bends[0] ?? end);
+    const arrive = solid(link.target) && cuts(bends.at(-1) ?? leave ?? start, end, levels.get(link.target)!, ends) ? beside(link.target, end, false) : undefined;
+    // Stepping in at the far end changes the angle at this one.
+    if (!leave && arrive && !bends.length) leave = leaving(arrive);
+    const path = [...(leave ? [leave] : []), ...bends, ...(arrive ? [arrive] : [])];
+    return path.length ? [{ relation: link.relation!, side: link.side ?? 'common', depth, points: link.flipped ? path.reverse() : path }] : [];
   });
   // Outside neighbours only steer this scope; they are not part of its extent.
   const kept = all.filter(id => !id.startsWith(phantomPrefix));

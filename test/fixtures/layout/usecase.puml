@@ -1,0 +1,21 @@
+@startuml
+left to right direction
+actor Customer
+actor Admin
+actor "Payment provider" as PSP
+rectangle "Web shop" {
+  usecase "Browse catalog" as UC1
+  usecase "Place order" as UC2
+  usecase "Pay order" as UC3
+  usecase "Manage products" as UC4
+  usecase "Refund order" as UC5
+}
+Customer --> UC1
+Customer --> UC2
+Customer --> UC3
+UC2 ..> UC3 : <<include>>
+UC3 --> PSP
+Admin --> UC4
+Admin --> UC5
+UC5 --> PSP
+@enduml

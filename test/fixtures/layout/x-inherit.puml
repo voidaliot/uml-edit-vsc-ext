@@ -1,0 +1,32 @@
+@startuml
+abstract class Shape
+class Circle
+class Polygon
+class Rectangle
+class Triangle
+class Square
+interface Drawable
+interface Serializable
+class Canvas
+class Layer
+class Renderer
+class SvgRenderer
+class PngRenderer
+class Style
+Shape <|-- Circle
+Shape <|-- Polygon
+Polygon <|-- Rectangle
+Polygon <|-- Triangle
+Rectangle <|-- Square
+Drawable <|.. Shape
+Serializable <|.. Shape
+Serializable <|.. Canvas
+Canvas *-- Layer
+Layer o-- Shape
+Renderer <|-- SvgRenderer
+Renderer <|-- PngRenderer
+Renderer ..> Canvas
+Shape --> Style
+Layer --> Style
+Canvas --> Renderer
+@enduml

@@ -1,0 +1,112 @@
+@startuml
+class N0
+class N1
+class N2
+class N3
+class N4
+class N5
+class N6
+class N7
+class N8
+class N9
+class N10
+class N11
+class N12
+class N13
+class N14
+class N15
+class N16
+class N17
+class N18
+class N19
+class N20
+class N21
+class N22
+class N23
+class N24
+class N25
+class N26
+class N27
+class N28
+class N29
+class N30
+class N31
+class N32
+class N33
+class N34
+class N35
+class N36
+class N37
+class N38
+class N39
+N23 --> N26
+N21 --> N29
+N26 --> N31
+N34 --> N39
+N2 --> N10
+N8 --> N10
+N15 --> N16
+N2 --> N8
+N36 --> N39
+N29 --> N30
+N24 --> N28
+N8 --> N16
+N2 --> N9
+N5 --> N6
+N28 --> N34
+N33 --> N39
+N1 --> N4
+N6 --> N12
+N15 --> N18
+N31 --> N34
+N8 --> N12
+N22 --> N26
+N11 --> N18
+N24 --> N27
+N28 --> N33
+N15 --> N20
+N9 --> N10
+N23 --> N28
+N18 --> N21
+N18 --> N19
+N30 --> N32
+N4 --> N11
+N24 --> N29
+N37 --> N39
+N19 --> N23
+N25 --> N31
+N9 --> N11
+N24 --> N25
+N30 --> N34
+N14 --> N19
+N10 --> N13
+N33 --> N36
+N23 --> N24
+N35 --> N39
+N17 --> N19
+N30 --> N33
+N0 --> N4
+N4 --> N12
+N11 --> N16
+N23 --> N31
+N28 --> N36
+N10 --> N12
+N31 --> N36
+N20 --> N28
+N13 --> N19
+N7 --> N9
+N13 --> N14
+N5 --> N11
+N32 --> N34
+N22 --> N25
+N7 --> N12
+N25 --> N33
+N36 --> N38
+N27 --> N28
+N32 --> N35
+N12 --> N18
+N14 --> N17
+N22 --> N30
+N17 --> N25
+N2 --> N7
+@enduml
