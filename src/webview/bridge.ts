@@ -1,6 +1,6 @@
-import type { HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
+import type { DiagramKind, HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
 import { applyDiagramEdit } from '../core/edits';
-import { getNativeTemplate } from '../core/templates';
+import { starterSource } from '../core/templates';
 import { mergeLayoutPositions } from '../host/messages';
 import { MAX_SOURCE_BYTES, validateSource } from '../core/layout-file';
 
@@ -16,6 +16,11 @@ declare global {
 
 const vscode = window.acquireVsCodeApi?.();
 export const isStandalone = !vscode;
+/** Per-editor view choices that are not part of the document, such as the family of a blank diagram. */
+export interface ViewState { kinds?: Record<string, DiagramKind> }
+let viewState: ViewState = (vscode?.getState() as ViewState | undefined) ?? {};
+export const loadViewState = (): ViewState => viewState;
+export function saveViewState(state: ViewState): void { viewState = state; vscode?.setState(state); }
 export let isFilePreview = !vscode && window.__ALIOT_PREVIEW_MODEL__ === true;
 export type BridgeMessage = HostMessage | { type: 'connection'; connected: boolean } | { type: 'documentOpened' };
 const listeners = new Set<(message: BridgeMessage) => void>();
@@ -165,7 +170,7 @@ export function send(message: WebviewMessage): void {
         case 'ready': emit(documentMessage()); break;
         case 'edit': {
           if (message.version !== version) throw new Error('The document changed while you were editing. Your draft is still available; review it against the current source before applying again.');
-          const next = applyDiagramEdit(source, message.diagramId, message.edit);
+          const next = applyDiagramEdit(source, message.diagramId, message.edit, { kind: message.kind });
           if (next !== source) { undo.push(historySnapshot()); redo.length = 0; source = next; version++; }
           emit(documentMessage()); break;
         }
@@ -176,10 +181,10 @@ export function send(message: WebviewMessage): void {
           layouts = { ...layouts, [message.diagramId]: next }; break;
         }
         case 'create': {
-          const template = getNativeTemplate(message.kind);
-          if (!template) throw new Error('This diagram type does not have a native editor yet.');
+          const starter = starterSource(message.kind, message.blank);
+          if (!starter) throw new Error('This diagram type does not have a native editor yet.');
           undo.push(historySnapshot('document')); redo.length = 0;
-          source = template.source; version++; layouts = {}; fileName = `${template.kind}.puml`;
+          source = starter; version++; layouts = {}; fileName = `${message.kind}.puml`;
           emit(documentMessage()); break;
         }
         case 'undo': if (undo.length) { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;

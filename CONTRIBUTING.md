@@ -20,7 +20,7 @@ Press **F5** to launch an Extension Development Host, or open the standalone pre
 - `src/shared/`: typed host/webview protocol and diagram data structures.
 - `src/host/`: message validation and source-version checks.
 - `src/extension.ts`: custom text editor provider, native document edits, layout files, the shared undo/redo history and commands.
-- `src/webview/`: React Flow canvas, UML shapes and markers, inline forms, source editor and template gallery.
+- `src/webview/`: React Flow canvas, UML shapes and markers, inline forms, source editor and template gallery. `arrange.ts` holds the pure placement helpers (container bounds, free spots, alignment); `connections.ts` and `routing.ts` choose ports and draw connectors, including the bends `graph-layout.ts` reserves for links that skip ranks.
 - `test/`: core and host regression tests; `test/web/`: browser interaction tests; `test/native/`: extension host smoke tests.
 
 Keep `.puml` source authoritative. Prefer narrow text-span edits and retain comments, aliases, directives, EOLs, and unrelated blocks. Reject ambiguous edits. Unsupported syntax must be identified explicitly with its source retained. Do not introduce a PlantUML/Java renderer, generated diagram images, or a remote rendering fallback. Changes to versioned edit handling need conflict tests.

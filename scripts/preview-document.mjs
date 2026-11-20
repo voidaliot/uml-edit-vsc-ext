@@ -10,7 +10,7 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
   path = await realpath(path);
   const { applyDiagramEdit } = await loadModule('src/core/edits.ts', 'preview-edits');
   const { validWebviewMessage, requireDocumentVersion, mergeLayoutPositions } = await loadModule('src/host/messages.ts', 'preview-messages');
-  const { nativeTemplates } = await loadModule('src/core/templates.ts', 'preview-templates');
+  const { starterSource } = await loadModule('src/core/templates.ts', 'preview-templates');
   const { layoutFileName, parseLayoutFile, serializeLayoutFile, validateSource } = await loadModule('src/core/layout-file.ts', 'preview-layout');
   const layoutPath = layoutFileName(path);
   const readOptional = async file => { try { return await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
@@ -101,7 +101,7 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
       switch (message.type) {
         case 'edit':
           requireDocumentVersion(version, message.version);
-          await change(applyDiagramEdit(source, message.diagramId, message.edit), layoutText);
+          await change(applyDiagramEdit(source, message.diagramId, message.edit, { kind: message.kind }), layoutText);
           break;
         case 'layout': {
           if (message.version !== undefined) requireDocumentVersion(version, message.version);
@@ -113,10 +113,10 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
           break;
         }
         case 'create': {
-          const template = nativeTemplates.find(item => item.kind === message.kind);
-          if (!template) throw new Error('This diagram type does not yet have a native editor.');
+          const starter = starterSource(message.kind, message.blank);
+          if (!starter) throw new Error('This diagram type does not yet have a native editor.');
           const eol = source.includes('\r\n') ? '\r\n' : '\n';
-          await change((source.trim() ? source.trimEnd() + eol + eol : '') + template.source.replace(/\r?\n/g, eol), layoutText);
+          await change((source.trim() ? source.trimEnd() + eol + eol : '') + starter.replace(/\r?\n/g, eol), layoutText);
           break;
         }
         case 'undo': await travel(undo, redo); break;

@@ -11,6 +11,21 @@ function center(element: DiagramElement | undefined, point: Point): Point {
   return { x: point.x + width / 2, y: point.y + height / 2 };
 }
 
+/** Layout bends stay valid only while both endpoints still sit where the layout put them. */
+export function activeRoute(relation: DiagramRelation, points: Record<string, Point>): Point[] | undefined {
+  const route = relation.meta?.route as Point[] | undefined, anchor = relation.meta?.routeAnchor as { source: Point; target: Point } | undefined;
+  if (!route?.length || !anchor) return;
+  const near = (a: Point | undefined, b: Point) => !!a && Math.abs(a.x - b.x) < .5 && Math.abs(a.y - b.y) < .5;
+  const at = (id: string) => Object.hasOwn(points, id) ? points[id] : undefined;
+  return near(at(relation.source), anchor.source) && near(at(relation.target), anchor.target) ? route : undefined;
+}
+
+function sideToward(element: DiagramElement | undefined, own: Point, other: Point): Side {
+  const width = Number(element?.meta?.width ?? 192), height = Number(element?.meta?.height ?? 80);
+  const dx = other.x - own.x, dy = other.y - own.y;
+  return Math.abs(dx) / width > Math.abs(dy) / height ? dx >= 0 ? 'right' : 'left' : dy >= 0 ? 'bottom' : 'top';
+}
+
 /** Side selection uses visible shape centers, so different node sizes cannot skew a trunk. */
 function baseHandles(relation: DiagramRelation, diagram: DiagramBlock, points: Record<string, Point>) {
   if (diagram.kind === 'sequence') {
@@ -36,6 +51,8 @@ function baseHandles(relation: DiagramRelation, diagram: DiagramBlock, points: R
     return ports;
   }
   if (relation.meta?.sourceHandle && relation.meta?.targetHandle) return { sourceHandle: String(relation.meta.sourceHandle), targetHandle: String(relation.meta.targetHandle) };
+  const bends = activeRoute(relation, points);
+  if (bends) return { sourceHandle: sideToward(sourceElement, source, bends[0]), targetHandle: sideToward(targetElement, target, bends.at(-1)!) };
   const hint = relation.arrow.replace(/\[[^\]]*\]/g, '').match(/[-.=](left|right|up|down|le|ri|do|l|r|u|d)(?=[-.=<>|o*{])/i)?.[1];
   if (hint && /^[ud]/i.test(hint)) return dy >= 0 ? { sourceHandle: 'bottom', targetHandle: 'top' } : { sourceHandle: 'top', targetHandle: 'bottom' };
   if (hint && /^[lr]/i.test(hint)) return dx >= 0 ? { sourceHandle: 'right', targetHandle: 'left' } : { sourceHandle: 'left', targetHandle: 'right' };
@@ -61,12 +78,12 @@ export function prepareGraphPorts(diagram: DiagramBlock, points: Record<string, 
     if (/hidden/i.test(relation.arrow) || relation.source === relation.target || relation.meta?.sourceHandle || relation.meta?.targetHandle) continue;
     const source = elements.get(relation.source), target = elements.get(relation.target);
     if (!source || !target || !Object.hasOwn(points, source.id) || !Object.hasOwn(points, target.id)) continue;
-    const handles = baseHandles(relation, diagram, points);
+    const handles = baseHandles(relation, diagram, points), route = activeRoute(relation, points);
     for (const end of ['source', 'target'] as const) {
       const element = end === 'source' ? source : target, opposite = end === 'source' ? target : source;
       const side = handles[end === 'source' ? 'sourceHandle' : 'targetHandle'] as Side;
       if (!['top', 'right', 'bottom', 'left'].includes(side)) continue;
-      const other = center(opposite, points[opposite.id]), own = center(element, points[element.id]);
+      const other = route ? end === 'source' ? route[0] : route.at(-1)! : center(opposite, points[opposite.id]), own = center(element, points[element.id]);
       const horizontal = side === 'top' || side === 'bottom';
       const width = Number(element.meta?.width ?? 192), height = Number(element.meta?.height ?? 80);
       const dx = other.x - own.x, dy = other.y - own.y;

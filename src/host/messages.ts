@@ -19,6 +19,7 @@ export function validEdit(value: unknown): value is DiagramEdit {
     case 'editRelation': return id(value.relationId) && text(value.arrow, 100) && text(value.label);
     case 'deleteElement': return id(value.elementId);
     case 'deleteRelation': return id(value.relationId);
+    case 'deleteElements': return [value.elementIds, value.relationIds].every(list => Array.isArray(list) && list.length <= 20000 && list.every(item => id(item)));
     case 'replaceSource':
     case 'insertSnippet': return text(value.source, 2 * 1024 * 1024);
     default: return false;
@@ -40,9 +41,9 @@ export function validWebviewMessage(value: unknown): value is WebviewMessage {
     case 'undo':
     case 'redo': return true;
     case 'openSource': return value.line === undefined || (version(value.line) && value.line <= 1e7);
-    case 'edit': return version(value.version) && id(value.diagramId) && validEdit(value.edit);
+    case 'edit': return version(value.version) && id(value.diagramId) && validEdit(value.edit) && (value.kind === undefined || text(value.kind, 100));
     case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions }));
-    case 'create': return text(value.kind, 100);
+    case 'create': return text(value.kind, 100) && (value.blank === undefined || typeof value.blank === 'boolean');
     default: return false;
   }
 }

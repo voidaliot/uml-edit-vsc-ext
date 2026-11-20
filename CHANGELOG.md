@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Start from nothing.** The gallery offers **Blank** beside **Example**, and an empty `@startuml` block asks which diagram it is going to be instead of assuming a class diagram. The chosen type stays while the source does not contradict it, so a use case diagram that begins with an actor, or a component diagram that begins with a database, no longer turns into a sequence diagram. The type remains correctable under **Diagram type** until the source settles it.
+- New elements get readable source: `class Invoice` and `class "Line item" as LineItem` instead of `class "Invoice" as class_1`. Activity diagrams can add their start and stop, and state machines their initial and final symbols, from the palette or a state's context menu.
+- **Delete what is selected.** Delete, the toolbar button and the context menu remove the whole selection as one undoable step. Select with a marquee, Shift/Ctrl-click or Ctrl+A. Activity decisions, loops and forks are removed with their branches, start and stop symbols can be deleted, and deleting a sequence frame keeps its messages.
+- **Arrange.** Elements added from the palette are laid out with the diagram instead of stacking on one spot. Dragging a marquee selection by its box is saved, packages and other containers stay drawn around their contents wherever those are dragged, and a selection can be aligned or distributed from the toolbar. An element ranked by the automatic layout never lands on one placed by hand.
+- **Layout.** Graph diagrams route a relationship that spans several ranks beside the boxes in between, not through them, including relationships that cross a package boundary. Cycles are broken at their feedback edge, a lone source sits next to what it points at, relationships from outside a container decide which of its children face that side, and independent groups wrap instead of forming one row. Parallel and opposite relationships keep their labels apart, and labelled relationships get room between rows.
+- Relationship types offered when connecting follow the diagram: messages and replies in sequence diagrams, transitions in state machines, cardinalities in entity diagrams.
+- Sequence frames and notes in the last rows no longer overlap the participant footers or the next message's label.
+
 ## 0.6.0 — 2026-11-08
 
 - Releases now publish the same tested VSIX to Visual Studio Marketplace, Open VSX and GitHub automatically when a new version reaches `main`. Failed publishing runs can be retried without duplicating registry versions.

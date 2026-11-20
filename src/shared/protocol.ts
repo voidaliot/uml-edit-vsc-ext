@@ -48,20 +48,22 @@ export type DiagramEdit =
   | { type: 'editRelation'; relationId: string; label: string; arrow: string }
   | { type: 'deleteElement'; elementId: string }
   | { type: 'deleteRelation'; relationId: string }
+  /** One undoable step for a whole selection. */
+  | { type: 'deleteElements'; elementIds: string[]; relationIds: string[] }
   | { type: 'replaceSource'; source: string }
   | { type: 'insertSnippet'; source: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;
 export type HostMessage =
-  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number }
+  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number; /** Families chosen for blank diagrams, per diagram id. */ kinds?: Record<string, DiagramKind> }
   | { type: 'showSource' }
   | { type: 'error'; message: string };
 export type WebviewMessage =
   | { type: 'ready' }
-  | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit }
+  | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit; /** The family shown for a block whose source does not settle it. */ kind?: DiagramKind }
   | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point> }
-  | { type: 'create'; kind: DiagramKind }
+  | { type: 'create'; kind: DiagramKind; /** Start without the sample content. */ blank?: boolean }
   | { type: 'openSource'; line?: number }
   | { type: 'undo' }
   | { type: 'redo' };

@@ -302,3 +302,20 @@ option { background: var(--panel); color: var(--text); }
 .kind-sequence-destroy { background: transparent; border: 0; box-shadow: none; }
 .kind-sequence-destroy .node-title { padding: 0; background: transparent; font-size: 30px; min-height: 20px; }
 .activation-bar { position: absolute; left: calc(50% - 6px); width: 12px; background: var(--node-bg); border: 1px solid var(--diagram-line); }
+
+/* Canvas text is not prose: dragging a marquee must not select labels. */
+.app-shell { user-select: none; -webkit-user-select: none; }
+.app-shell input, .app-shell textarea { user-select: text; -webkit-user-select: text; }
+.kind-select { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 10px; font-size: 10px; color: var(--muted); }
+.kind-select select { font: 12px var(--font); color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
+.empty-state.kind-chooser { max-width: 620px; pointer-events: auto; }
+.kind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.kind-grid button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 9px 11px; text-align: left; background: var(--raised); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; }
+.kind-grid button:hover { border-color: var(--accent); background: var(--hover); }
+.kind-grid button span { font-size: 10px; color: var(--muted); }
+.starter-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+.gallery-controls { display: flex; align-items: center; gap: 12px; margin: 0 30px 20px; }
+.gallery-controls .gallery-search { flex: 1; margin: 0; }
+.start-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+.start-mode button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 7px 14px; font: 12px var(--font); cursor: pointer; }
+.start-mode button.active { background: var(--selected); color: var(--selected-text); }

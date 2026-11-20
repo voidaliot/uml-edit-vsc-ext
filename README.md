@@ -14,7 +14,7 @@ Create and edit diagrams directly in VS Code: rename a class, connect components
 
 - **Work directly on the diagram.** Double-click names and members, add elements from the canvas menu, and drag between connection handles for supported relationships.
 - **Keep readable source.** Edit `.puml` files or use the source panel inside the canvas. Source edits update the diagram; visual edits update the corresponding source.
-- **Start from a template.** Choose from 33 diagram families in a searchable gallery, then switch between multiple diagram blocks in the same file.
+- **Start from a template or from nothing.** Choose from 33 diagram families in a searchable gallery, with an example or blank, then switch between multiple diagram blocks in the same file.
 - **Your PlantUML stays plain PlantUML.** Manual positions go to a small layout file next to the diagram, so other tools and teammates without the extension see exactly the source you wrote.
 - **Use familiar editor controls.** One undo/redo history for moves and edits, native VS Code save and unsaved-change handling, plus outline navigation, a minimap, zoom, fit, and **Re-layout**.
 - **Render locally.** No Java, Graphviz installation, PlantUML server, or remote rendering service is required.
@@ -24,9 +24,10 @@ Create and edit diagrams directly in VS Code: rename a class, connect components
 Requires **VS Code 1.104.0 or later** on a desktop or remote extension host.
 
 1. Install **Aliot UML Editor** from the Extensions view, or run `ext install voidaliot.aliot-uml-editor` from Quick Open (**Ctrl+P** / **Cmd+P**). For a downloaded `.vsix`, use **Extensions: Install from VSIX…** from the Command Palette.
-2. Run **Aliot UML: New Diagram** and choose a template, or open an existing `.puml`, `.plantuml`, `.pu`, or `.iuml` file.
-3. Double-click a label or compartment to edit it. Right-click empty canvas to add an element. Drag connection handles to create supported relationships.
-4. Save with **Ctrl+S** / **Cmd+S**. Manual positions are saved automatically in the layout file.
+2. Run **Aliot UML: New Diagram** and choose a template, or open an existing `.puml`, `.plantuml`, `.pu`, or `.iuml` file. Pick **Blank** in the gallery to draw from an empty canvas.
+3. Add elements from the palette in the outline, or right-click the canvas to place one there. Double-click a label or compartment to edit it. Drag connection handles to create supported relationships.
+4. Select with a click, Shift-click, a dragged marquee or **Ctrl+A** / **Cmd+A**; press **Delete** to remove the selection, or drag it to arrange.
+5. Save with **Ctrl+S** / **Cmd+S**. Manual positions are saved automatically in the layout file.
 
 If a file opens as text, right-click its editor tab and choose **Reopen Editor With… → Aliot UML Editor**, or run **Aliot UML: Open Diagram**.
 
@@ -76,6 +77,8 @@ Order "1" *-- "many" LineItem : contains
 
 Double-click **Order** to rename it, edit its members, or move the shapes. Use **Re-layout** to clear manual placements and arrange the current diagram again.
 
+An empty `@startuml` block does not say which diagram it is, so the canvas asks. Your choice holds while the source leaves it open: a use case diagram may begin with an actor without being drawn as a sequence diagram. It is kept with the editor, not written into the file.
+
 ## Where your layout is saved
 
 | File | What it stores |
@@ -91,7 +94,10 @@ Commit the layout file to share your arrangement, or ignore it and let everyone 
 | --- | --- |
 | Rename | Double-click a name, or select and press **F2** |
 | Edit members or properties | Double-click the compartment or shape content |
-| Add an element or child | Right-click the canvas or a supported container |
+| Add an element or child | Use the outline palette, or right-click the canvas or a supported container |
+| Select several | Shift-click or Ctrl/Cmd-click, drag a marquee, or **Ctrl+A** / **Cmd+A** |
+| Delete the selection | **Delete** or **Backspace**, the toolbar, or the context menu |
+| Align or distribute | Select two or more elements and use the arrange buttons in the toolbar |
 | Edit a relationship | Double-click its connector or label |
 | Reorder a sequence message | Drag its line or label up/down; focused labels also accept **↑** / **↓** |
 | Move or resize a sequence divider | Drag its label; select it and drag the left/right resize handle |

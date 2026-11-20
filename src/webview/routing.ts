@@ -75,16 +75,35 @@ export function routeActivityEdge(geometry: EdgeGeometry, route: ActivityRoute, 
   return { path: orthogonalPath(points, radius), labelX, labelY, points };
 }
 
+/** The point a given fraction of the way along a polyline. */
+export function pointAlong(points: Point[], fraction: number): Point {
+  const lengths = points.slice(1).map((point, index) => Math.hypot(point.x - points[index].x, point.y - points[index].y));
+  let remaining = lengths.reduce((sum, length) => sum + length, 0) * Math.max(0, Math.min(1, fraction));
+  for (let index = 0; index < lengths.length; index++) {
+    if (remaining <= lengths[index] && lengths[index] > 0) {
+      const t = remaining / lengths[index];
+      return { x: points[index].x + (points[index + 1].x - points[index].x) * t, y: points[index].y + (points[index + 1].y - points[index].y) * t };
+    }
+    remaining -= lengths[index];
+  }
+  return points.at(-1)!;
+}
+
 /** Structured flow keeps its branches and loop tracks; other links are straight by default. */
-export function routeConnector(geometry: EdgeGeometry, lineType: LineType = 'straight', activity?: ActivityRoute, self = false) {
+export function routeConnector(geometry: EdgeGeometry, lineType: LineType = 'straight', activity?: ActivityRoute, self = false, bends: Point[] = [], labelAt = .5) {
   if (activity) return routeActivityEdge(geometry, activity, lineType === 'spline' ? 12 : 0);
   const { sourceX: sx, sourceY: sy, targetX: tx, targetY: ty } = geometry;
+  if (bends.length && !self) {
+    // Layout lanes carry a long link around the boxes of the ranks it skips.
+    const points = [{ x: sx, y: sy }, ...bends, { x: tx, y: ty }], label = pointAlong(points, labelAt);
+    return { path: orthogonalPath(points, lineType === 'spline' ? 28 : lineType === 'straight' ? 10 : 0), labelX: label.x, labelY: label.y };
+  }
   if (self) {
     const outsideX = Math.max(sx, tx) + 48, outsideY = Math.min(sy, ty) - 40;
     const points = [{ x: sx, y: sy }, { x: outsideX, y: sy }, { x: outsideX, y: outsideY }, { x: tx, y: outsideY }, { x: tx, y: ty }];
     return { path: orthogonalPath(points, lineType === 'spline' ? 16 : 0), labelX: outsideX + 10, labelY: (sy + outsideY) / 2 };
   }
-  if (lineType === 'straight' || lineType === 'polyline') return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: (sx + tx) / 2, labelY: (sy + ty) / 2 };
+  if (lineType === 'straight' || lineType === 'polyline') return { path: `M ${sx} ${sy} L ${tx} ${ty}`, labelX: sx + (tx - sx) * labelAt, labelY: sy + (ty - sy) * labelAt };
   const options = { ...geometry, sourcePosition: geometry.sourcePosition as Position, targetPosition: geometry.targetPosition as Position };
   let [path, labelX, labelY] = lineType === 'spline' ? getBezierPath(options) : getSmoothStepPath({ ...options, borderRadius: 0, offset: 16 });
   // React Flow emits zero-radius Q commands even when its corner radius is zero.

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { parseDocument } from './core/parser';
 import { applyDiagramEdit } from './core/edits';
-import { nativeTemplates } from './core/templates';
+import { starterSource } from './core/templates';
 import { isPlantUmlFile, layoutFileName, parseLayoutFile, serializeLayoutFile, validateSource } from './core/layout-file';
 import type { DiagramKind, DiagramLayout, HostMessage, Layouts, WebviewMessage } from './shared/protocol';
 import { mergeLayoutPositions, minimalTextChange, requireDocumentVersion, validWebviewMessage } from './host/messages';
@@ -68,6 +68,8 @@ export function layoutFileUri(uri: vscode.Uri): vscode.Uri | undefined {
 
 export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscode.Disposable {
   private readonly sessions = new Set<EditorSession>();
+  /** The family picked for a document that was created blank, by document URI. */
+  private readonly blankKinds = new Map<string, DiagramKind>();
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly editQueues = new Map<string, Promise<void>>();
   private readonly states = new Map<string, LayoutState>();
@@ -139,10 +141,12 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     panel.webview.html = this.html(panel.webview);
   }
 
-  async newDiagram(kind?: DiagramKind): Promise<void> {
-    const template = kind ? nativeTemplates.find(item => item.kind === kind) : undefined;
-    if (kind && !template) throw new Error('That diagram type is not available in the native editor yet.');
-    const document = await vscode.workspace.openTextDocument({ language: 'plantuml', content: template?.source ?? '' });
+  async newDiagram(kind?: DiagramKind, blank = false): Promise<void> {
+    const starter = kind ? starterSource(kind, blank) : undefined;
+    if (kind && !starter) throw new Error('That diagram type is not available in the native editor yet.');
+    const document = await vscode.workspace.openTextDocument({ language: 'plantuml', content: starter ?? '' });
+    // A blank UML block does not say which family it is; the new editor is told.
+    if (kind && blank) this.blankKinds.set(document.uri.toString(), kind);
     await vscode.commands.executeCommand('vscode.openWith', document.uri, EDITOR_VIEW_TYPE);
   }
 
@@ -173,7 +177,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         await this.enqueueEdit(document, async () => {
           requireDocumentVersion(document.version, message.version);
           const before = document.getText();
-          const after = applyDiagramEdit(before, message.diagramId, message.edit);
+          const after = applyDiagramEdit(before, message.diagramId, message.edit, { kind: message.kind });
           validateSource(after);
           await this.replaceText(document, before, after, document.version);
           // Changed text already broadcasts once through onDidChangeTextDocument.
@@ -205,15 +209,16 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         });
         break;
       case 'create': {
-        const template = nativeTemplates.find(item => item.kind === message.kind);
-        if (!template) throw new Error('That diagram template is not available.');
+        const starter = starterSource(message.kind, message.blank);
+        if (!starter) throw new Error('That diagram template is not available.');
         if (!document.getText().trim()) {
           await this.enqueueEdit(document, async () => {
             const before = document.getText();
-            if (before.trim()) { await this.newDiagram(template.kind); return; }
-            await this.replaceText(document, before, template.source, document.version);
+            if (before.trim()) { await this.newDiagram(message.kind, message.blank); return; }
+            if (message.blank) this.blankKinds.set(document.uri.toString(), message.kind);
+            await this.replaceText(document, before, starter, document.version);
           });
-        } else await this.newDiagram(template.kind);
+        } else await this.newDiagram(message.kind, message.blank);
         break;
       }
       case 'openSource': await this.openSource(document.uri, message.line); break;
@@ -277,6 +282,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
   }
 
   private releaseState(key: string): void {
+    this.blankKinds.delete(key);
     this.flushViewports(key);
     this.states.get(key)?.watcher?.dispose();
     this.states.delete(key);
@@ -393,6 +399,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         type: 'document', source, version: session.document.version,
         fileName: basename(session.document.uri.path) || 'Untitled PlantUML',
         layouts: this.editorLayouts(this.state(session.document)), trusted: vscode.workspace.isTrusted,
+        ...(this.blankKinds.has(session.document.uri.toString()) ? { kinds: { 'diagram-1': this.blankKinds.get(session.document.uri.toString())! } } : {}),
       });
     } catch (error) { void this.post(session, { type: 'error', message: errorMessage(error) }); }
   }

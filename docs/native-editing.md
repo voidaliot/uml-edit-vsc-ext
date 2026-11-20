@@ -10,7 +10,7 @@ Native, editable UML diagrams built with React Flow and synchronized with PlantU
 
 1. Install the VSIX with **Extensions → Install from VSIX…**.
 2. Open a `.puml`, `.plantuml`, `.pu`, or `.iuml` file, or run **Aliot UML: New Diagram**.
-3. Double-click a name or member compartment to edit it. Right-click the canvas to create elements. Drag handles to connect supported elements.
+3. Double-click a name or member compartment to edit it. Add elements from the outline palette or by right-clicking the canvas. Drag handles to connect supported elements. Select with a click, Shift/Ctrl-click, a marquee or Ctrl/Cmd+A, and press Delete to remove the selection.
 4. Use the source editor to edit PlantUML inside the canvas. **Source file** also opens the text document alongside the diagram. Text edits update the diagram immediately; diagram edits use VS Code's dirty-state handling and save with Ctrl/Cmd+S.
 5. Move elements freely. Manual placements are saved automatically in a layout file next to the diagram.
 
@@ -64,17 +64,34 @@ The file `examples/all-native.puml` contains all **33** original starter diagram
 
 Basic formatted labels and selected stock icon names render natively. Simple local procedures with literal arguments can project declarations and edit their invocation parameters. Arbitrary preprocessor evaluation, loops/conditions inside procedures, custom sprites, external includes and remote resources are not executed. Known C4/ArchiMate includes select local native notation. Source styles are preserved, but full PlantUML styling is not reproduced. Engine utilities such as `listopeniconic`, `listsprite` and `stdlib` remain source-only.
 
+## Starting from an empty diagram
+
+**New diagram** opens the gallery with two ways to start: **Example** inserts the family's sample, **Blank** inserts only its `@start…` / `@end…` markers (plus the library include for C4 and ArchiMate). Families that are edited inside their sample, such as JSON, YAML, Salt or charts, always start from their example.
+
+The nine UML families share `@startuml` and are told apart by content, so an empty block does not say what it is. The canvas asks, and that choice selects the palette, the notation and the syntax of what you add. It applies only while the source leaves the question open: once the block contains something that belongs to one family (a `participant`, a `state`, an activity action, a class), the source decides, exactly as it does for PlantUML. While it is open, **Diagram type** in the outline changes it. The choice is editor state; it is not written to the `.puml` file.
+
+New elements use their name as the alias where it is an identifier (`class Invoice`), and a readable alias derived from it otherwise (`class "Line item" as LineItem`).
+
+State machines add their initial and final symbols to the selected state with **initial** / **final** in the palette, or from the state's context menu. Activity diagrams add **start** and **stop** from the palette.
+
+## Deleting
+
+Delete removes everything selected in one edit, with the relationships and member statements that referred to it. A container goes with its contents. In activity and SDL diagrams a decision, loop or fork is removed with its branches, from any of its symbols; one `elseif` alternative is removed alone. Flow lines there follow the structure and go with the elements they join. Deleting a sequence frame dissolves the frame and keeps its messages. Elements the editor only generates, such as a schedule axis, are skipped.
+
 ## Navigation and placement
 
 | Action | Gesture |
 | --- | --- |
 | Rename | Double-click the name, or select and press F2 |
 | Edit members or diagram-specific properties | Double-click the compartment or shape content |
-| Add element | Right-click empty canvas, or use the outline palette |
+| Add element | Use the outline palette, or right-click empty canvas to place it there |
+| Select several | Shift/Ctrl/Cmd-click, drag a marquee, or Ctrl/Cmd+A; Escape clears |
+| Delete | Delete or Backspace, the toolbar button, or the context menu; a whole selection is one undo step |
+| Align / distribute | Select two or more elements; use the arrange buttons that appear in the toolbar |
 | Add child | Right-click a container, tree node or data collection |
 | Connect elements | Drag between connection handles |
 | Edit relationship | Double-click connector or label |
-| Move | Drag an element; sequence participants move horizontally |
+| Move | Drag an element or a selection; sequence participants move horizontally |
 | Reorder a sequence message | Drag its line or label vertically, or use Up/Down on its focused label |
 | Move / resize a sequence divider | Drag its label; select it and drag the left/right resize handle |
 | Select-mode pan | Wheel, Shift+wheel horizontally, or middle-button drag |
@@ -82,13 +99,13 @@ Basic formatted labels and selected stock icon names render natively. Simple loc
 | Hand tool | H; drag pans, wheel zooms |
 | Temporary Hand / Select / Fit | Hold Space / V / F |
 
-Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved in the diagram's layout file.
+Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved in the diagram's layout file. Only what you move is pinned; everything else stays with the automatic layout and is kept clear of the pinned elements. A container is always drawn around its contents. In a diagram that is mostly arranged by hand, an element added from the palette takes a free place beside the arrangement.
 
 Sequence connections use row-specific lifeline handles and insert source at the chosen row. Message and divider vertical drags reorder source events, retaining directly attached activation directives. Else dividers remain inside their fragment. Divider horizontal positions and widths are saved in the layout file and take part in the shared undo/redo history.
 
 Activity layout follows the control flow: centered action chains, balanced branches and merges, parallel fork lanes and outer loop paths. Node dimensions follow their labels. Pan, zoom and fit preserve automatic layout; only deliberate placement and dragging create manual overrides. **Re-layout** clears those overrides and arranges the current source again, including files positioned with an older extension version.
 
-Graph layouts follow source directions, inheritance and relationships inside nested groups. Mind maps honor left/right branches, WBS uses compact branch stacks, and sequence columns adapt to participant names and messages. JSON/YAML objects and arrays use editable tables; Gantt schedules use compact rows on a shared calendar grid.
+Graph layouts follow source directions, inheritance and relationships inside nested groups. A relationship that spans several ranks is routed through its own lane beside the boxes in between, also when it enters or leaves a package; the bends are dropped as soon as one of its ends is moved by hand. Cycles are cut at their feedback edge, relationships from outside a container decide which of its children face that side, and independent groups wrap into rows. Mind maps honor left/right branches, WBS uses compact branch stacks, and sequence columns adapt to participant names and messages. JSON/YAML objects and arrays use editable tables; Gantt schedules use compact rows on a shared calendar grid.
 
 Ordinary connectors use straight lines by default. Set `skinparam linetype ortho` for sharp right-angle routes, `polyline` for straight segments, or `spline`/`splines` for curves. Activity branches, loops and schedule dependencies retain their structured tracks, with sharp corners unless curves are requested; sequence messages stay horizontal. Inline dashed, dotted, plain and bold arrow settings are applied. Only directives in the current source are interpreted; included files and arbitrary preprocessing are not evaluated. Existing manual placements remain until **Re-layout** is used.
 
