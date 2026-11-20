@@ -6,6 +6,8 @@ import { familyFor } from './families/registry';
 import { editProcedure } from './procedures';
 import { editLegacyActivity } from './legacy-activity';
 import { moveSequenceEvent, sequenceInsertionLine } from './sequence';
+import { pasteInsertionLine, pasteLines } from './clipboard';
+import { setProperties } from './properties';
 
 const memberKinds = new Set(['class', 'abstract class', 'interface', 'enum', 'annotation', 'object', 'entity']);
 const relationArrows = new Set(['-->', '->', '<--', '<-', '--', '..', '..>', '<..', '<|--', '--|>', '<|..', '..|>', '*--', '--*', 'o--', '--o', '||--o{', '}o--||', '||--||', '}o--o{', '-->>', '->>', '<->', '<-->']);
@@ -17,10 +19,10 @@ function nameValue(name: string): string {
   return name.trim();
 }
 
-function newId(block: DiagramBlock, kind: string): string {
+function newId(block: DiagramBlock, kind: string, taken: ReadonlySet<string> = new Set()): string {
   const stem = kind.replace(/[^a-zA-Z0-9_]/g, '_') || 'element';
   let index = 1;
-  while (block.elements.some(element => element.id === `${stem}_${index}`)) index++;
+  while (taken.has(`${stem}_${index}`) || block.elements.some(element => element.id === `${stem}_${index}`)) index++;
   return `${stem}_${index}`;
 }
 
@@ -38,12 +40,12 @@ function assertComplete(block: DiagramBlock): void {
 const reservedAliases = new Set(['as', 'class', 'interface', 'enum', 'abstract', 'annotation', 'object', 'entity', 'actor', 'participant', 'boundary', 'control', 'collections', 'queue', 'database', 'component', 'node', 'artifact', 'cloud', 'package', 'namespace', 'frame', 'folder', 'rectangle', 'card', 'file', 'storage', 'stack', 'agent', 'person', 'process', 'label', 'hexagon', 'circle', 'usecase', 'state', 'action', 'note', 'start', 'stop', 'end', 'if', 'else', 'endif', 'while', 'repeat', 'fork', 'split', 'alt', 'opt', 'loop', 'par', 'break', 'critical', 'group', 'ref', 'activate', 'deactivate', 'destroy', 'return', 'title', 'legend', 'header', 'footer', 'hide', 'show', 'skinparam', 'left', 'right', 'top', 'bottom', 'together', 'of', 'on', 'over', 'is']);
 
 /** A readable alias taken from the name: "Line item" becomes LineItem. */
-function aliasFor(block: DiagramBlock, kind: string, name: string): string {
+function aliasFor(block: DiagramBlock, kind: string, name: string, taken: ReadonlySet<string> = new Set()): string {
   const words = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').split(/[^A-Za-z0-9_]+/).filter(Boolean);
   const stem = words.length === 1 ? words[0] : words.map(word => word[0].toUpperCase() + word.slice(1)).join('');
-  if (!stem || !/^[A-Za-z_]/.test(stem) || stem.length > 40 || reservedAliases.has(stem.toLowerCase())) return newId(block, kind);
+  if (!stem || !/^[A-Za-z_]/.test(stem) || stem.length > 40 || reservedAliases.has(stem.toLowerCase())) return newId(block, kind, taken);
   let alias = stem, index = 2;
-  while (block.elements.some(element => element.id === alias)) alias = `${stem}${index++}`;
+  while (taken.has(alias) || block.elements.some(element => element.id === alias)) alias = `${stem}${index++}`;
   return alias;
 }
 
@@ -178,6 +180,22 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     return deleteSelection(source, diagramId, edit.elementIds, edit.relationIds, options);
   }
   if (edit.type === 'moveSequenceEvent') return moveSequenceEvent(source, block, edit.eventId, edit.row);
+
+  // Clipboard and properties work on declaration lines; both refuse other families themselves.
+  if (edit.type === 'paste') {
+    // A copy keeps its alias where it is free; beside its original, Order becomes Order2.
+    const fresh = (id: string, taken: ReadonlySet<string>) => {
+      if (isIdentifier(id) && !taken.has(id) && !reservedAliases.has(id.toLowerCase())) return id;
+      const stem = id.replace(/(?<=\D)\d+$/, '');
+      return aliasFor(block, 'element', stem, stem === id ? taken : new Set([...taken, stem]));
+    };
+    lines.splice(pasteInsertionLine(block), 0, ...pasteLines(block, edit, fresh));
+    const result = lines.join(eol);
+    const pasted = parseDocument(result, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
+    if (!pasted?.graphical || pasted.kind !== block.kind) throw new Error('Pasting here would leave syntax the canvas cannot edit. Paste in the source editor instead.');
+    return result;
+  }
+  if (edit.type === 'properties') return setProperties(source, block, edit.elementId, edit);
   if (block.meta?.legacy) {
     const result = editLegacyActivity(source, block, edit);
     if (result !== undefined) return result;

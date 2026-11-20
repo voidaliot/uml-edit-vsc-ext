@@ -22,6 +22,8 @@ export function validEdit(value: unknown): value is DiagramEdit {
     case 'deleteElements': return [value.elementIds, value.relationIds].every(list => Array.isArray(list) && list.length <= 20000 && list.every(item => id(item)));
     case 'replaceSource':
     case 'insertSnippet': return text(value.source, 2 * 1024 * 1024);
+    case 'paste': return text(value.kind, 100) && !!value.kind && text(value.source, 2 * 1024 * 1024);
+    case 'properties': return id(value.elementId) && text(value.stereotype, 200) && text(value.color, 100);
     default: return false;
   }
 }
