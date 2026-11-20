@@ -107,9 +107,13 @@ export function pasteLines(block: DiagramBlock, fragment: Pick<ClipFragment, 'ki
   const blocker = clipboardBlocker(block);
   if (blocker) throw new Error(blocker);
   if (fragment.kind !== block.kind) throw new Error(`These elements were copied from a ${label(fragment.kind)} diagram and cannot be pasted into a ${label(block.kind)} diagram.`);
-  if (typeof fragment.source !== 'string' || !fragment.source.trim() || /^\s*@(?:start|end)/im.test(fragment.source)) throw new Error('There is nothing to paste.');
+  if (typeof fragment.source !== 'string' || !fragment.source.trim()) throw new Error('There is nothing to paste.');
+  // A block marker anywhere, even behind a comment, could end the diagram early; a stray CR would mix line endings.
+  if (/@(?:start|end)[a-z]/i.test(fragment.source) || fragment.source.includes('\r')) throw new Error('The copied text cannot be pasted into a diagram. Paste it in the source editor.');
+  // Alone, a few elements may read as another of the families that share this syntax (a lone
+  // `[Web]` as a component diagram); the family is settled by the diagram they are pasted into.
   const snippet = parseDocument(`@startuml\n${fragment.source}\n@enduml`, { kinds: { 'diagram-1': block.kind } }).diagrams[0];
-  if (!snippet?.graphical || snippet.kind !== block.kind) throw new Error(`The copied text is not a ${label(block.kind)} diagram the canvas can edit.`);
+  if (!snippet?.graphical || !copyableKinds.has(snippet.kind)) throw new Error(`The copied text is not a ${label(block.kind)} diagram the canvas can edit.`);
   const raw = fragment.source.split('\n'), code = codeLines(fragment.source);
   // Snippet document line n is fragment line n - 1.
   const skip = new Set<number>();

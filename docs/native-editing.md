@@ -80,7 +80,7 @@ Copy, cut, paste and duplicate (Ctrl/Cmd+C, X, V, D) work on the selection in cl
 
 Dragging a connection onto empty canvas offers the element kinds that can be added and connected in one step, then asks for a name. Releasing on an element's body connects to it. A selected relationship shows a grip at each end: drag one to another element to re-attach that end. Only the endpoint token changes in the source, and the edit is refused when it would create or drop an element as a side effect. Structure-derived and macro-based families (activity, C4, ArchiMate, DOT) do not offer re-attaching.
 
-In the freely arranged families a selected relationship also shows a grip in the middle of each segment. Drag it to add a bend, drag a bend to move it, double-click a bend to remove it. Bends are placement, not source: they are saved in the layout file, undone like moves, and removed by **Re-layout**. They are absolute points and stay where they are when an end is moved.
+In the freely arranged families a selected relationship also shows a grip in the middle of each segment. Drag it to add a bend, drag a bend to move it, double-click a bend to remove it. Bends are placement, not source: they are saved in the layout file, undone like moves, and removed by **Re-layout**. Bending a relationship pins both of its ends where they are shown. Bends move along when both ends are dragged together and stay put when only one end moves. When the relationships between two elements change (one is deleted, re-attached, or an end is renamed), the bends between those two elements are dropped instead of passing to a neighbouring relationship.
 
 **Properties…** in an element's context menu sets or clears its stereotype and background colour on the declaration line.
 

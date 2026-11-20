@@ -186,3 +186,38 @@ test('structure-derived connections offer neither grips nor quick add', async ({
   await expect(page.locator('.react-flow__edgeupdater')).toHaveCount(0);
   await expect(page.locator('.edge-grip')).toHaveCount(0);
 });
+
+test('bends move with a relationship whose ends are dragged together, and are not inherited by a neighbour', async ({ page }) => {
+  await page.addInitScript(value => Object.defineProperty(window, '__ALIOT_INITIAL_SOURCE__', { value }), '@startuml\nclass A\nclass B\nclass C\nA --> B : one\nA --> B : two\nB --> C\n@enduml\n');
+  await page.goto('/');
+  const node = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+  await expect(node('C')).toBeVisible();
+  const segments = () => page.locator('.react-flow__edge path.react-flow__edge-path').evaluateAll(paths => paths.map(path => (path.getAttribute('d') ?? '').match(/[LQ]/g)?.length ?? 0));
+  const pickOne = async () => { await page.keyboard.press('Escape'); await page.locator('.edge-label', { hasText: 'one' }).click(); };
+  await pickOne();
+  const grip = (await page.locator('.bend-grip.add').first().boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down(); await page.mouse.move(grip.x - 140, grip.y + 5, { steps: 8 }); await page.mouse.up();
+  await expect.poll(segments).toEqual([3, 1, 1]);
+  const bend = page.locator('.bend-grip:not(.add)').first();
+  const before = (await bend.boundingBox())!, start = (await node('A').boundingBox())!;
+
+  await page.keyboard.press('Escape');
+  await node('A').click(); await node('B').click({ modifiers: ['Shift'] });
+  await page.mouse.move(start.x + 90, start.y + 14); await page.mouse.down(); await page.mouse.move(start.x + 150, start.y + 40, { steps: 5 }); await page.mouse.move(start.x + 290, start.y + 74, { steps: 8 }); await page.mouse.up();
+  const moved = (await node('A').boundingBox())!;
+  expect(moved.x - start.x).toBeGreaterThan(100);
+  await pickOne();
+  const after = (await bend.boundingBox())!;
+  expect(after.x - before.x).toBeCloseTo(moved.x - start.x, 0);
+  expect(after.y - before.y).toBeCloseTo(moved.y - start.y, 0);
+  // The drag and the bends it carried are one step.
+  await page.getByRole('button', { name: 'Undo (Ctrl+Z)' }).click();
+  await pickOne();
+  await expect.poll(async () => Math.round((await bend.boundingBox())!.x - before.x)).toBe(0);
+  expect(Math.round((await node('A').boundingBox())!.x - start.x)).toBe(0);
+
+  // Deleting "one" makes "two" the first A → B relationship; it must stay straight.
+  await page.keyboard.press('Delete');
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  await expect.poll(segments).toEqual([1, 1]);
+});

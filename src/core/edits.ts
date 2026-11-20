@@ -177,6 +177,15 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     return lines.join(eol);
   }
   assertComplete(block);
+  // Edits that rewrite a declaration line are checked on their result: a comment or brace caught in
+  // the rewritten text must not take the diagram, or the blocks after it, off the canvas.
+  const stillEditable = (result: string, action: string): string => {
+    if (result === source) return result;
+    const parse = (text: string) => parseDocument(text, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams;
+    const after = parse(result), same = after.find(candidate => candidate.id === diagramId);
+    if (after.length !== parse(source).length || !same?.graphical || same.kind !== block.kind) throw new Error(`${action} would leave syntax the canvas cannot edit. Make this change in the source editor.`);
+    return result;
+  };
   if (edit.type === 'deleteElements') {
     if (!Array.isArray(edit.elementIds) || !Array.isArray(edit.relationIds) || !edit.elementIds.length && !edit.relationIds.length) throw new Error('Select something to delete.');
     return deleteSelection(source, diagramId, edit.elementIds, edit.relationIds, options);
@@ -202,9 +211,9 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     if (!pasted?.graphical || pasted.kind !== block.kind) throw new Error('Pasting here would leave syntax the canvas cannot edit. Paste in the source editor instead.');
     return result;
   }
-  if (edit.type === 'properties') return setProperties(source, block, edit.elementId, edit);
+  if (edit.type === 'properties') return stillEditable(setProperties(source, block, edit.elementId, edit), 'Changing these properties');
   // Membership is where a declaration is written; the move refuses every family where it is not.
-  if (edit.type === 'moveToContainer') return moveToContainer(source, block, edit.elementId, edit.parentId);
+  if (edit.type === 'moveToContainer') return stillEditable(moveToContainer(source, block, edit.elementId, edit.parentId), 'Moving this element');
 
   if (block.meta?.legacy) {
     const result = editLegacyActivity(source, block, edit);

@@ -61,7 +61,7 @@ describe('copying and pasting elements', () => {
     // Free names stay as they were.
     expect(block(pasted, 'diagram-2').source).toBe('@startuml\nclass Invoice\nclass Order\nclass Customer\nCustomer --> Order\n@enduml');
     expect(() => paste(source, fragment, 'diagram-3')).toThrow('copied from a class diagram and cannot be pasted into a state machine diagram');
-    expect(() => applyDiagramEdit(source, 'diagram-1', { type: 'paste', kind: 'class', source: '@enduml\nclass X' })).toThrow('nothing to paste');
+    expect(() => applyDiagramEdit(source, 'diagram-1', { type: 'paste', kind: 'class', source: '@enduml\nclass X' })).toThrow('cannot be pasted into a diagram');
   });
 
   it('is unavailable where statements depend on their order or on a family adapter', () => {

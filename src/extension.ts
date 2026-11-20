@@ -245,7 +245,8 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         break;
       }
       case 'openSource': await this.openSource(document.uri, message.line); break;
-      case 'export': await this.saveExport(document, message); break;
+      // Reported here, not to the canvas: an error message there would also fail whatever edit is applying.
+      case 'export': try { await this.saveExport(document, message); } catch (error) { void vscode.window.showErrorMessage(`The image could not be saved. ${errorMessage(error)}`); } break;
       case 'undo':
       case 'redo': await this.history(session, message.type); break;
     }

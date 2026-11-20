@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ReactFlow, Background, BackgroundVariant, MiniMap, applyNodeChanges, applyEdgeChanges, ConnectionMode, SelectionMode, useReactFlow, useNodesInitialized, type NodeTypes, type EdgeTypes, type Connection, type Viewport, type NodeChange } from '@xyflow/react';
 import type { FinalConnectionState } from '@xyflow/react';
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
+import { ClipboardPaste, Copy, CopyPlus, Keyboard, Scissors, SlidersHorizontal, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
 import { parseDocument, umlFamilies } from '../core/parser';
 import { applyDiagramEdit } from '../core/edits';
 import { layoutDiagram } from '../core/layout';
@@ -10,18 +10,16 @@ import type { DiagramBlock, DiagramEdit, DiagramElement, DiagramKind, DiagramRel
 import { send, subscribe, isStandalone, isFilePreview, openLocalFile, downloadSource, loadViewState, saveViewState } from './bridge';
 import { UmlNodeView, type UmlNode } from './nodes';
 import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
-import { prepareGraphPorts, relationHandles } from './connections';
 import { alignBoxes, clearOfPinned, containerBounds, freeformKinds, freeSpot, type Alignment, type Box } from './arrange';
 import { ExportMenu } from './ExportMenu';
-import { ClipboardPaste, Copy, CopyPlus, Keyboard, Scissors, SlidersHorizontal } from 'lucide-react';
 import { clipboardBlocker, copyFragment, declarationBlocker, pasteInsertionLine } from '../core/clipboard';
 import { captureClip, drawnBox, filterOutline, pastePoints, type Clip, type PendingPaste } from './clipboard';
 import { PropertiesForm, ShortcutsPopover, paletteLabel } from './panels';
 import { keyLabel } from './shortcuts';
 import { DragOverlay, MoveToMenu, dropFeedback, followDrag, groupPlacements, menuPlacement, nodeBox, snapDrag, startSession, usePointer, type DragFeedback, type DragSession } from './dragAssist';
 import { QuickConnect, connectableKinds, connectionDrop, type QuickAdd } from './QuickConnect';
-import { canReconnect, interactiveEdges } from './connections';
-import { relationBendKeys } from '../core/layout-file';
+import { canReconnect, interactiveEdges, prepareGraphPorts, relationHandles } from './connections';
+import { relationBendKeys, shiftBends, staleBendKeys } from '../core/layout-file';
 import { reconnectRadius } from './edges';
 
 type FlowNode = UmlNode;
@@ -171,6 +169,7 @@ export function App() {
         send({ type: 'edit', version: version ?? current.version, diagramId: diagramId ?? diagram!.id, edit, kind });
       });
       setApplyingEdit(false);
+      if (applied) dropStaleBends(diagramId ?? diagram!.id, current.source, expectedSource);
       if (applied && edit.type === 'rename') {
         const id = diagramId ?? diagram!.id;
         const before = parseDocument(current.source, { kinds: kindsRef.current }).diagrams.find(block => block.id === id);
@@ -205,6 +204,21 @@ export function App() {
   const selectEdge = useCallback((id: string, extend: boolean) => {
     setEdges(previous => previous.map(edge => edge.id === id ? { ...edge, selected: extend ? !edge.selected : true } : extend ? edge : { ...edge, selected: false }));
     if (!extend) setNodes(previous => previous.map(node => node.selected ? { ...node, selected: false } : node));
+  }, []);
+
+  const bendsRef = useRef(bends);
+  bendsRef.current = bends;
+  /** After an edit, bends must not pass to a neighbouring relationship that took over their identity. */
+  const dropStaleBends = useCallback((id: string, before: string, after: string) => {
+    const kept = bendsRef.current[id];
+    if (!kept || !Object.keys(kept).length) return;
+    const find = (text: string) => { const block = parseDocument(text, { kinds: kindsRef.current }).diagrams.find(item => item.id === id); return block && { source: text, relations: block.relations }; };
+    const was = find(before);
+    const stale = was ? staleBendKeys(Object.keys(kept), was, find(after)) : [];
+    if (!stale.length) return;
+    const next = Object.fromEntries(Object.entries(kept).filter(([key]) => !stale.includes(key))), placed = { ...positions.current[id] ?? docRef.current?.layouts[id]?.positions ?? {} };
+    setBends(previous => ({ ...previous, [id]: next }));
+    send({ type: 'layout', version: docRef.current?.version, basePositions: placed, baseBends: kept, diagramId: id, layout: { positions: placed, bends: next } });
   }, []);
 
   const moveMessage = useCallback((relation: DiagramRelation, row: number, version: number, diagramId: string) => commit({ type: 'moveSequenceEvent', eventId: relation.id, row }, version, diagramId), [commit]);
@@ -358,7 +372,7 @@ export function App() {
     if (left < 0 || top < 0 || right > rect.width || bottom > rect.height) void flow.fitView({ padding: 0.2, maxZoom: 1, duration: 220 });
   }, [nodesInitialized, nodes, flow]);
 
-  const persistLayout = useCallback((viewport?: Viewport, movedIds: readonly string[] = []) => {
+  const persistLayout = useCallback((viewport?: Viewport, movedIds: readonly string[] = [], movedBends?: Record<string, Point[]>) => {
     if (!diagram || !native) return;
     const currentNodes = flow.getNodes().filter(node => node.type === 'uml');
     const nextPositions: Record<string, ElementPlacement> = Object.assign(Object.create(null), positions.current[diagram.id] ?? docRef.current?.layouts[diagram.id]?.positions ?? {});
@@ -374,7 +388,9 @@ export function App() {
     prepareGraphPorts(diagram, displayedPositions);
     setNodes(previous => previous.map(node => ({ ...node, data: { ...node.data } })));
     setEdges(previous => previous.map(edge => ({ ...edge, ...relationHandles(edge.data!.relation, diagram, displayedPositions) })));
-    send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { positions: nextPositions, viewport: viewport ?? flow.getViewport() } });
+    if (movedBends) setBends(previous => ({ ...previous, [diagram.id]: movedBends }));
+    // One message, so a drag and the bends it carried along are one undo step.
+    send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { positions: nextPositions, viewport: viewport ?? flow.getViewport(), ...(movedBends ? { bends: movedBends } : {}) }, ...(movedBends ? { baseBends: bendsRef.current[diagram.id] ?? {} } : {}) });
   }, [diagram, native, flow]);
 
   useEffect(() => {
@@ -433,7 +449,8 @@ export function App() {
       if (event.key === 'Escape') { setMenu(undefined); setElementDraft(undefined); setRelationDraft(undefined); setShowGallery(false); select([]); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && native) { event.preventDefault(); select([...nodes.filter(node => node.selectable !== false).map(node => node.id), ...edges.map(edge => edge.id)]); return; }
       if (event.key === 'F2' && selectedId && native) { event.preventDefault(); const relation = diagram?.relations.find(item => item.id === selectedId); if (relation) editRelation(relation); else requestRename(selectedId); }
-      if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); }
+      // With focus on a button of an open form, Delete belongs to that form, not to the selection behind it.
+      if ((event.key === 'Delete' || event.key === 'Backspace') && !(event.target as HTMLElement).closest('[role="dialog"]')) { event.preventDefault(); deleteSelection(); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); send({ type: event.shiftKey ? 'redo' : 'undo' }); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); send({ type: 'redo' }); }
       if (!(event.ctrlKey || event.metaKey || event.altKey)) {
@@ -462,6 +479,8 @@ export function App() {
     setMenu(undefined);
     if (!pasted || !diagram || !documentState) { if (!pasted) setError(`Copy elements first (${keyLabel('Mod+C')}).`); return; }
     if (clipboardProblem) { setError(clipboardProblem); return; }
+    // A held key repeats faster than an edit applies; the second must not discard the first one's placement.
+    if (pendingEdit.current) { setError('Another edit is still applying. Try again when it finishes.'); return; }
     const taken = flow.getNodes().filter(node => node.data.diagramId === diagram.id).map(drawnBox);
     pendingPaste.current = { diagramId: diagram.id, knownIds: new Set(diagram.elements.map(element => element.id)), insertLine: pasteInsertionLine(diagram), points: pastePoints(pasted, taken) };
     if (!await commit({ type: 'paste', kind: pasted.fragment.kind, source: pasted.fragment.source })) pendingPaste.current = undefined;
@@ -562,6 +581,7 @@ export function App() {
       return;
     }
     if (unnamedKinds.has(kind)) {
+      if (pendingEdit.current) { setError('Another edit is still applying. Try again when it finishes.'); return; }
       pendingPlacement.current = { diagramId: diagram.id, knownIds: new Set(diagram.elements.map(element => element.id)) };
       void commit({ type: 'addElement', kind, name: kind }).then(applied => { if (!applied) pendingPlacement.current = undefined; });
       return;
@@ -571,7 +591,10 @@ export function App() {
 
   const addElement = async () => {
     if (!elementDraft || !diagram || !elementDraft.name.trim()) return;
-    pendingPlacement.current = { diagramId: diagram.id, knownIds: new Set(diagram.elements.map(element => element.id)), point: elementDraft.point };
+    if (pendingEdit.current) { setError('Another edit is still applying. Try again when it finishes.'); return; }
+    // The form may outlive a switch to another diagram; the new element is looked for where it is added.
+    const target = parsed.diagrams.find(block => block.id === elementDraft.diagramId) ?? diagram;
+    pendingPlacement.current = { diagramId: target.id, knownIds: new Set(target.elements.map(element => element.id)), point: elementDraft.point };
     const applied = await commit({ type: 'addElement', kind: elementDraft.kind, name: elementDraft.name.trim(), parentId: elementDraft.parentId }, elementDraft.version, elementDraft.diagramId);
     if (applied) setElementDraft(undefined);
     else pendingPlacement.current = undefined;
@@ -620,7 +643,9 @@ export function App() {
   const addConnected = async () => {
     const draft = quickAdd;
     if (!draft?.kind || !draft.name.trim() || !diagram) return;
-    pendingPlacement.current = { diagramId: draft.diagramId, knownIds: new Set(diagram.elements.map(element => element.id)), point: draft.point };
+    if (pendingEdit.current) { setError('Another edit is still applying. Try again when it finishes.'); return; }
+    const target = parsed.diagrams.find(block => block.id === draft.diagramId) ?? diagram;
+    pendingPlacement.current = { diagramId: target.id, knownIds: new Set(target.elements.map(element => element.id)), point: draft.point };
     const applied = await commit({ type: 'addConnectedElement', source: draft.source, kind: draft.kind, name: draft.name.trim(), arrow: draft.arrow, label: '', sequenceRow: draft.sequenceRow }, draft.version, draft.diagramId);
     if (applied) setQuickAdd(undefined);
     else pendingPlacement.current = undefined;
@@ -637,8 +662,16 @@ export function App() {
     const baseBends = bends[diagram.id] ?? {}, next = { ...baseBends };
     if (points.length) next[key] = points; else delete next[key];
     setBends(previous => ({ ...previous, [diagram.id]: next }));
-    const placed = { ...positions.current[diagram.id] ?? docRef.current?.layouts[diagram.id]?.positions ?? {} };
-    send({ type: 'layout', version: docRef.current?.version, basePositions: placed, baseBends, diagramId: diagram.id, layout: { positions: placed, viewport: flow.getViewport(), bends: next } });
+    const basePositions = { ...positions.current[diagram.id] ?? docRef.current?.layouts[diagram.id]?.positions ?? {} }, placed = { ...basePositions };
+    // Bends are absolute points: both ends are pinned where they are shown, or the next automatic
+    // re-rank would move the boxes away from the route drawn between them.
+    const relation = diagram.relations.find(item => item.id === relationId);
+    if (points.length) for (const end of [relation?.source, relation?.target]) {
+      const node = end ? flow.getNode(end) : undefined;
+      if (node && !Object.hasOwn(placed, node.id) && !node.data.element.meta?.container && !node.data.element.meta?.positionLocked && !node.data.element.meta?.moveEdit) placed[node.id] = { ...node.position };
+    }
+    positions.current[diagram.id] = placed;
+    send({ type: 'layout', version: docRef.current?.version, basePositions, baseBends, diagramId: diagram.id, layout: { positions: placed, viewport: flow.getViewport(), bends: next } });
   }, [diagram, bendKeys, bends, flow]);
   const linkedEdges = useMemo(() => interactiveEdges(edges, nodes, { relinkable, bendable, bends: diagram ? bends[diagram.id] ?? {} : {}, keys: bendKeys, onBends: changeBends }), [edges, nodes, relinkable, bendable, bends, bendKeys, diagram, changeBends]);
   const reconnect = (edge: UmlEdge, connection: Connection) => {
@@ -677,6 +710,7 @@ export function App() {
   /** Change an element's container; its new places are saved on the edited source, so undo takes them back before the edit. */
   const moveIntoContainer = async (elementId: string, parentId: string | undefined, placements: Record<string, Point>, version: number, diagramId: string) => {
     const edit: DiagramEdit = { type: 'moveToContainer', elementId, ...(parentId ? { parentId } : {}) };
+    if (pendingEdit.current) { setError('Another edit is still applying. Try again when it finishes.'); return false; }
     if (Object.keys(placements).length) placements = { ...groupPlacements(flow.getNodes(), [flow.getNode(elementId)?.data.element.parentId, parentId], id => Object.hasOwn(positions.current[diagramId] ?? {}, id)), ...placements };
     try { if (docRef.current && Object.keys(placements).length) followPlacement.current = { diagramId, positions: placements, source: applyDiagramEdit(docRef.current.source, diagramId, edit, { kind: kindsRef.current[diagramId] }) }; } catch { /* commit reports why the move is refused */ }
     const applied = await commit(edit, version, diagramId);
@@ -716,7 +750,8 @@ export function App() {
         const before = started.positions[item.id];
         return before && (Math.abs(item.position.x - before.x) > 0.01 || Math.abs(item.position.y - before.y) > 0.01);
       }).map(item => item.id);
-      if (movedIds.length) persistLayout(undefined, movedIds);
+      const deltas = Object.fromEntries(movedIds.map(id => { const at = flow.getNode(id)!.position; return [id, { x: at.x - started.positions[id].x, y: at.y - started.positions[id].y }]; }));
+      if (movedIds.length) persistLayout(undefined, movedIds, shiftBends(bendsRef.current[diagram.id] ?? {}, deltas));
     }
   };
   const sourceTarget = sourceDiagram === 'document' ? documentState?.source : parsed.diagrams.find(block => block.id === sourceDiagram)?.source;
@@ -799,7 +834,8 @@ export function App() {
       const before = started.positions[node.id];
       return before && (Math.abs(node.position.x - before.x) > .01 || Math.abs(node.position.y - before.y) > .01);
     }).map(node => node.id);
-    if (movedIds.length) persistLayout(undefined, movedIds);
+    const deltas = Object.fromEntries(movedIds.map(id => { const at = nodes.find(node => node.id === id)!.position; return [id, { x: at.x - started.positions[id].x, y: at.y - started.positions[id].y }]; }));
+    if (movedIds.length) persistLayout(undefined, movedIds, shiftBends(bendsRef.current[diagram.id] ?? {}, deltas));
   }, [nodes, diagram?.id, persistLayout]);
   const sourceTargetLabel = sourceDiagram === 'document' ? 'Document' : parsed.diagrams.find(block => block.id === sourceDiagram)?.title ?? sourceDiagram;
   const sourceChanged = documentState && sourceVersion !== documentState.version && sourceDraft !== sourceTarget;
@@ -909,7 +945,7 @@ export function App() {
           {menu.relation && selectionCount <= 1 && <button role="menuitem" onClick={() => editRelation(menu.relation!)}>Edit relationship</button>}
           {menu.element && native && selectionCount <= 1 && diagram?.kind === 'state' && menu.element.kind === 'state' && <><button role="menuitem" onClick={() => beginElement('initial', undefined, menu.element!.id)}>Mark as initial state</button><button role="menuitem" onClick={() => beginElement('final', undefined, menu.element!.id)}>Add final transition</button></>}
           {native && !clipboardProblem && selectedNodes.length + (selectedId && !selectedEdges.includes(selectedId) ? 1 : 0) > 0 && (menu.element || !menu.relation) && <><button role="menuitem" onClick={() => clipboardKeys.current.actions.cut()}><Scissors size={13} /> Cut <kbd>{keyLabel('Mod+X')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.copy()}><Copy size={13} /> Copy <kbd>{keyLabel('Mod+C')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.duplicate()}><CopyPlus size={13} /> Duplicate <kbd>{keyLabel('Mod+D')}</kbd></button></>}
-          {native && !clipboardProblem && clip.current && <button role="menuitem" onClick={() => void pasteClip(clip.current)}><ClipboardPaste size={13} /> Paste <kbd>{keyLabel('Mod+V')}</kbd></button>}
+          {native && !clipboardProblem && clip.current && !menu.relation && <button role="menuitem" onClick={() => void pasteClip(clip.current)}><ClipboardPaste size={13} /> Paste <kbd>{keyLabel('Mod+V')}</kbd></button>}
           {menu.element && native && selectionCount <= 1 && diagram && !declarationBlocker(diagram, 'Properties') && menu.element.meta?.editable !== false && !menu.element.implicit && !['start', 'end'].includes(menu.element.kind) && <button role="menuitem" onClick={() => { setPropertiesDraft({ element: menu.element!, version: documentState!.version, diagramId: diagram.id }); setMenu(undefined); }}><SlidersHorizontal size={13} /> Properties…</button>}
           {native && selectionCount > 0 && <><button role="menuitem" onClick={deleteSelection}><Trash2 size={13} /> {selectionCount > 1 ? `Delete ${selectionCount} items` : menu.relation ? 'Delete relationship' : 'Delete element'} <kbd>Del</kbd></button><div className="menu-divider" /></>}
           {!menu.element && !menu.relation && native && !undecided && palette.filter(kind => !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, menu.point)}><Plus size={13} /> {paletteLabel(kind)}</button>)}

@@ -55,6 +55,8 @@ export function reconnectRelation(source: string, block: DiagramBlock, edit: Rec
   if (!element) throw new Error('This element no longer exists. Try the edit again on the current diagram.');
   if ((edit.end === 'source' ? relation.source : relation.target) === element.id) return source;
   if (element.meta?.editable === false || element.kind.startsWith('sequence-')) throw new Error('A relationship cannot end on this element.');
+  // A note without an alias is identified by its line number, which no relationship can name durably.
+  if (element.kind === 'note' && element.id === `note-${element.startLine}`) throw new Error('Give this note an alias (note "…" as N1) before attaching a relationship to it.');
   if (pseudoKinds.has(element.kind) && element.kind !== (edit.end === 'source' ? 'start' : 'end')) throw new Error('An initial state can only start a transition, and a final state can only end one.');
   const code = codeLines(source);
   const syntax = parseRelation(code[relation.startLine]);
@@ -70,6 +72,10 @@ export function reconnectRelation(source: string, block: DiagramBlock, edit: Rec
   const moved = next?.relations.filter(candidate => candidate.startLine === relation.startLine);
   const expected = edit.end === 'source' ? { source: element.id, target: relation.target } : { source: relation.source, target: element.id };
   if (!next || moved?.length !== 1 || moved[0].source !== expected.source || moved[0].target !== expected.target || next.elements.some(candidate => !block.elements.some(old => old.id === candidate.id))) throw new Error('This end cannot be re-attached unambiguously. Edit the relationship in the source panel.');
+  // An element named only in relationships lives where it is first mentioned; re-attaching must not
+  // pull it out of (or into) a container as a side effect.
+  const rehomed = next.elements.find(candidate => block.elements.find(old => old.id === candidate.id)?.parentId !== candidate.parentId);
+  if (rehomed) throw new Error(`Re-attaching here would move "${rehomed.name}" to another container, because it is only named in relationships. Declare it first, or edit the source.`);
   const lost = block.elements.find(old => !pseudoKinds.has(old.kind) && !next.elements.some(candidate => candidate.id === old.id));
   if (lost) throw new Error(`"${lost.name}" exists only through this relationship. Declare it first, or edit the source.`);
   return result;

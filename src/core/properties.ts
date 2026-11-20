@@ -7,7 +7,8 @@ export interface ElementProperties { stereotype: string; color: string }
 /** Why these values cannot be written into a declaration line, or undefined when they can. */
 export function propertiesError({ stereotype, color }: ElementProperties): string | undefined {
   if (typeof stereotype !== 'string' || typeof color !== 'string') return 'Enter a stereotype and a colour as text.';
-  if (stereotype.length > 200 || /[\r\n\u0000{}"]|<<|>>/.test(stereotype)) return 'A stereotype is one line of text without quotes, braces, << or >>.';
+  // An apostrophe opens a PlantUML comment (`'` to the end of the line, `/'` across lines).
+  if (stereotype.length > 200 || /[\r\n\u0000{}"']|<<|>>/.test(stereotype)) return 'A stereotype is one line of text without quotes, apostrophes, braces, << or >>.';
   if (color.trim() && !/^#?(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8}|[a-z]{3,30})$/i.test(color.trim())) return 'Use a colour such as #FFAA00 or a name such as LightBlue.';
 }
 
@@ -34,9 +35,16 @@ export function setProperties(source: string, block: DiagramBlock, elementId: st
   const end = declaration.bodyStart >= 0 ? declaration.bodyStart : text.trimEnd().length;
   const region = text.slice(declaration.headerEnd, end);
   if (raw.slice(declaration.headerEnd, end) !== region || region.includes('[[') || (region.match(/<</g) ?? []).length > 1 || (region.match(/#/g) ?? []).length > 1 || /#\w+[^\s\w{]/.test(region)) throw new Error('This declaration has links, comments or several stereotypes. Edit its properties in the source editor.');
-  const rest = region.replace(/\s*<<[^>]*>>/, '').replace(/\s*#\w+/, '').trimEnd();
+  // Anything else after the name (a generic type, a state's description) must stay behind the
+  // properties it was written after; where that order is unclear the line is left to the source editor.
+  const rest = region.replace(/\s*<<[^>]*>>/, '').replace(/\s*#\w+/, '');
+  const generic = rest.match(/^\s*<[^>]+>(?!>)/)?.[0] ?? '';
+  if (rest.slice(generic.length).trim()) throw new Error('This declaration has more after its name. Edit its properties in the source editor.');
   const stereotype = properties.stereotype.trim(), color = colorText(properties.color);
-  const tail = `${rest}${stereotype ? ` <<${stereotype}>>` : ''}${color ? ` #${color}` : ''}${declaration.bodyStart >= 0 ? ' ' : ''}`;
+  const before = { stereotype: region.match(/<<([^>]*)>>/)?.[1].trim() ?? '', color: region.match(/#(\w+)/)?.[1] ?? '' };
+  // Applying unchanged values is not an edit: it must not reflow the line or add an undo step.
+  if (before.stereotype === stereotype && before.color === color) return source;
+  const tail = `${generic.trimEnd()}${stereotype ? ` <<${stereotype}>>` : ''}${color ? ` #${color}` : ''}${declaration.bodyStart >= 0 ? ' ' : ''}`;
   lines[element.startLine] = raw.slice(0, declaration.headerEnd) + tail + raw.slice(end);
   return lines.join(source.includes('\r\n') ? '\r\n' : '\n');
 }
