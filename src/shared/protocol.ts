@@ -51,7 +51,10 @@ export type DiagramEdit =
   /** One undoable step for a whole selection. */
   | { type: 'deleteElements'; elementIds: string[]; relationIds: string[] }
   | { type: 'replaceSource'; source: string }
-  | { type: 'insertSnippet'; source: string };
+  | { type: 'insertSnippet'; source: string }
+  /** Copied declarations and relationships, renamed to free aliases where they land. */
+  | { type: 'paste'; kind: DiagramKind; source: string }
+  | { type: 'properties'; elementId: string; stereotype: string; color: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;

@@ -12,6 +12,11 @@ import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
 import { prepareGraphPorts, relationHandles } from './connections';
 import { alignBoxes, clearOfPinned, containerBounds, freeformKinds, freeSpot, type Alignment, type Box } from './arrange';
 import { ExportMenu } from './ExportMenu';
+import { ClipboardPaste, Copy, CopyPlus, Keyboard, Scissors, SlidersHorizontal } from 'lucide-react';
+import { clipboardBlocker, copyFragment, declarationBlocker, pasteInsertionLine } from '../core/clipboard';
+import { captureClip, drawnBox, filterOutline, pastePoints, type Clip, type PendingPaste } from './clipboard';
+import { PropertiesForm, ShortcutsPopover, paletteLabel } from './panels';
+import { keyLabel } from './shortcuts';
 
 type FlowNode = UmlNode;
 type DocumentState = Extract<HostMessage, { type: 'document' }>;
@@ -78,6 +83,14 @@ export function App() {
   kindsRef.current = kinds;
   const pendingEdit = useRef<{ expectedSource: string; version: number; resolve: (applied: boolean) => void; timer: number } | undefined>(undefined);
   const lastScene = useRef('');
+  const clip = useRef<Clip | undefined>(undefined);
+  const pendingPaste = useRef<PendingPaste | undefined>(undefined);
+  const pastedIds = useRef<string[] | undefined>(undefined);
+  const clipboardKeys = useRef({ at: 0, actions: {} as Record<'copy' | 'cut' | 'paste' | 'duplicate', () => void> });
+  const filterInput = useRef<HTMLInputElement>(null);
+  const [outlineFilter, setOutlineFilter] = useState('');
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [propertiesDraft, setPropertiesDraft] = useState<{ element: DiagramElement; version: number; diagramId: string }>();
   const flow = useReactFlow<FlowNode, UmlEdge>();
   const nodesInitialized = useNodesInitialized();
   const parsed = useMemo(() => parseDocument(documentState?.source ?? '', { kinds }), [documentState?.source, kinds]);
@@ -218,6 +231,16 @@ export function App() {
       if (movable && point) saved[added.id] = point;
       pendingPlacement.current = undefined; reveal.current = added.id;
       if (movable && point) send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
+    }
+    const paste = pendingPaste.current;
+    const copies = paste?.diagramId === diagram.id ? diagram.elements.filter(element => !paste.knownIds.has(element.id)) : [];
+    if (paste && copies.length) {
+      // Copies of hand-placed elements land beside them; the others are ranked with the rest.
+      const basePositions = { ...saved };
+      const placed = copies.filter(element => Object.hasOwn(paste.points, element.startLine - paste.insertLine) && !element.meta?.positionLocked && !element.meta?.moveEdit);
+      for (const element of placed) saved[element.id] = paste.points[element.startLine - paste.insertLine];
+      pendingPaste.current = undefined; pastedIds.current = copies.filter(element => element.meta?.editable !== false).map(element => element.id);
+      if (placed.length) send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
     }
     positions.current[diagram.id] = saved;
     const display: Record<string, Point> = Object.create(null);
@@ -399,6 +422,65 @@ export function App() {
     window.addEventListener('keydown', keydown); window.addEventListener('keyup', keyup); window.addEventListener('blur', blur);
     return () => { window.removeEventListener('keydown', keydown); window.removeEventListener('keyup', keyup); window.removeEventListener('blur', blur); };
   }, [selectedId, native, deleteSelection, requestRename, diagram, editRelation, flow, select, nodes, edges]);
+
+  const clipboardProblem = diagram && native ? clipboardBlocker(diagram) : 'Open an editable diagram first.';
+  /** The selection as source text, with where each copied element is drawn now. */
+  const takeClip = (): Clip | undefined => {
+    if (!diagram || !documentState) return undefined;
+    if (clipboardProblem) { setError(clipboardProblem); return undefined; }
+    const ids = [...new Set([...selectedNodes, ...(selectedId ? [selectedId] : [])])];
+    if (!ids.length) return undefined;
+    try { return captureClip(copyFragment(documentState.source, diagram, ids), flow.getNodes().filter(node => node.data.diagramId === diagram.id), positions.current[diagram.id] ?? {}); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : String(problem)); return undefined; }
+  };
+  const pasteClip = async (pasted: Clip | undefined) => {
+    setMenu(undefined);
+    if (!pasted || !diagram || !documentState) { if (!pasted) setError(`Copy elements first (${keyLabel('Mod+C')}).`); return; }
+    if (clipboardProblem) { setError(clipboardProblem); return; }
+    const taken = flow.getNodes().filter(node => node.data.diagramId === diagram.id).map(drawnBox);
+    pendingPaste.current = { diagramId: diagram.id, knownIds: new Set(diagram.elements.map(element => element.id)), insertLine: pasteInsertionLine(diagram), points: pastePoints(pasted, taken) };
+    if (!await commit({ type: 'paste', kind: pasted.fragment.kind, source: pasted.fragment.source })) pendingPaste.current = undefined;
+  };
+  const copySelection = () => { const taken = takeClip(); if (taken) clip.current = taken; setMenu(undefined); return Boolean(taken); };
+  clipboardKeys.current.actions = { copy: copySelection, cut: () => { if (copySelection()) deleteSelection(); }, paste: () => void pasteClip(clip.current), duplicate: () => { const taken = takeClip(); if (taken) void pasteClip(taken); } };
+
+  useEffect(() => {
+    const typing = (target: EventTarget | null) => target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]');
+    const textSelected = () => Boolean(window.getSelection()?.toString());
+    const keydown = (event: KeyboardEvent) => {
+      if (typing(event.target)) return;
+      if (event.key === '?' && !event.ctrlKey && !event.metaKey) { setShowShortcuts(open => !open); return; }
+      if (event.key === 'Escape') { setShowShortcuts(false); setPropertiesDraft(undefined); }
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'f') { event.preventDefault(); setShowOutline(true); requestAnimationFrame(() => filterInput.current?.select()); return; }
+      const action = ({ c: 'copy', x: 'cut', v: 'paste', d: 'duplicate' } as const)[key as 'c'];
+      // Selected text anywhere else on the page keeps the browser's own copy.
+      if (!action || (action === 'copy' || action === 'cut') && textSelected()) return;
+      event.preventDefault();
+      clipboardKeys.current.at = Date.now();
+      clipboardKeys.current.actions[action]();
+    };
+    // VS Code runs its own copy, cut and paste commands inside the webview without a key event first.
+    const clipboard = (event: ClipboardEvent) => {
+      if (typing(event.target) || event.type !== 'paste' && textSelected() || Date.now() - clipboardKeys.current.at < 500) return;
+      event.preventDefault();
+      clipboardKeys.current.actions[event.type as 'copy' | 'cut' | 'paste']();
+    };
+    window.addEventListener('keydown', keydown);
+    for (const type of ['copy', 'cut', 'paste']) document.addEventListener(type, clipboard as EventListener);
+    return () => { window.removeEventListener('keydown', keydown); for (const type of ['copy', 'cut', 'paste']) document.removeEventListener(type, clipboard as EventListener); };
+  }, []);
+
+  useEffect(() => {
+    const ids = pastedIds.current;
+    if (!ids || !nodesInitialized || !canvas.current || !ids.every(id => nodes.some(node => node.id === id))) return;
+    pastedIds.current = undefined;
+    select([...ids, ...edges.filter(edge => ids.includes(edge.source) && ids.includes(edge.target)).map(edge => edge.id)]);
+    const rect = canvas.current.getBoundingClientRect(), view = flow.getViewport();
+    const outside = ids.map(id => flow.getNode(id)).some(node => node && (node.position.x * view.zoom + view.x < 0 || node.position.y * view.zoom + view.y < 0 || (node.position.x + (node.measured?.width ?? 192)) * view.zoom + view.x > rect.width || (node.position.y + (node.measured?.height ?? 80)) * view.zoom + view.y > rect.height));
+    if (outside) void flow.fitView({ nodes: ids.map(id => ({ id })), padding: 0.3, maxZoom: view.zoom, duration: 220 });
+  }, [nodes, edges, nodesInitialized, flow, select]);
 
   const openSource = () => {
     if (!documentState) return;
@@ -650,15 +732,18 @@ export function App() {
       <span className="toolbar-divider" />
       <div className="toolbar-group">
         <ToolButton title="Edit PlantUML source in canvas" onClick={openSource} disabled={!documentState} active={sourceOpen}><Code2 size={16} /></ToolButton>
+        <ToolButton title="Keyboard shortcuts (?)" label="Keyboard shortcuts" onClick={() => setShowShortcuts(!showShortcuts)} active={showShortcuts}><Keyboard size={16} /></ToolButton>
         <ToolButton title="Source file" disabled={!documentState || isStandalone && !isFilePreview} onClick={() => isFilePreview ? openSource() : send({ type: 'openSource', line: diagram?.startLine })}><SquareArrowOutUpRight size={16} /></ToolButton>
       </div>
     </header>
     <div className="workspace">
       {showOutline && <aside className="outline" aria-label="Diagram outline">
-        <div className="outline-list">{native && diagram?.elements.map(element => <button key={element.id} className={`outline-item ${selectedId === element.id || selectedNodes.includes(element.id) ? 'selected' : ''}`} onClick={() => selectElement(element)} onDoubleClick={() => requestRename(element.id)}><span className={`element-glyph glyph-${element.kind}`}>{element.kind === 'actor' ? '♙' : element.kind === 'interface' ? 'I' : element.kind === 'enum' ? 'E' : element.kind.slice(0, 1).toUpperCase()}</span><span>{element.name || element.kind.replace(/(^|-|\s)(\w)/g, (_, separator: string, letter: string) => `${separator ? ' ' : ''}${letter.toUpperCase()}`)}</span><small>{element.kind}</small></button>)}
+        {native && Boolean(diagram?.elements.length) && <input ref={filterInput} className="outline-filter" type="search" aria-label="Find element" placeholder={`Find element (${keyLabel('Mod+F')})`} value={outlineFilter} onChange={event => setOutlineFilter(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setOutlineFilter(''); } if (event.key === 'Enter' && diagram) { const first = filterOutline(diagram.elements, outlineFilter)[0]; if (first) selectElement(first); } }} />}
+        <div className="outline-list">{native && filterOutline(diagram?.elements ?? [], outlineFilter).map(element => <button key={element.id} className={`outline-item ${selectedId === element.id || selectedNodes.includes(element.id) ? 'selected' : ''}`} onClick={() => selectElement(element)} onDoubleClick={() => requestRename(element.id)}><span className={`element-glyph glyph-${element.kind}`}>{element.kind === 'actor' ? '♙' : element.kind === 'interface' ? 'I' : element.kind === 'enum' ? 'E' : element.kind.slice(0, 1).toUpperCase()}</span><span>{element.name || element.kind.replace(/(^|-|\s)(\w)/g, (_, separator: string, letter: string) => `${separator ? ' ' : ''}${letter.toUpperCase()}`)}</span><small>{element.kind}</small></button>)}
+          {native && Boolean(diagram?.elements.length) && !filterOutline(diagram!.elements, outlineFilter).length && <p className="outline-none" role="status">No element matches “{outlineFilter.trim()}”.</p>}
           {(!native || !diagram?.elements.length) && <p className="outline-empty">{diagram ? native ? undecided ? 'Choose a diagram type to begin.' : 'Right-click the canvas to add an element.' : 'Native support for this syntax is not implemented. The source remains available.' : 'Create a diagram to begin.'}</p>}
         </div>
-        <div className="outline-bottom"><span className="small-label">{native ? 'ADD ELEMENT' : 'AUTHORING'}</span>{native && diagram?.meta?.openKind === true && <label className="kind-select">Diagram type<select aria-label="Diagram type" value={undecided ? '' : diagram.kind} onChange={event => chooseKind(diagram.id, event.target.value as DiagramKind)}>{undecided && <option value="">Choose…</option>}{umlFamilies.map(kind => <option key={kind} value={kind}>{getTemplate(kind)?.label ?? kind}</option>)}</select></label>}{native && undecided ? null : native && palette.length > 0 ? <div className="palette-list">{palette.map(kind => <button key={kind} title={`Add ${title(kind).toLowerCase()}`} onClick={() => beginElement(kind)}><Plus size={12} /><span>{kind}</span></button>)}</div> : <button className="text-button" onClick={openSource} disabled={!documentState}><Code2 size={14} /> Edit diagram source</button>}</div>
+        <div className="outline-bottom"><span className="small-label">{native ? 'ADD ELEMENT' : 'AUTHORING'}</span>{native && diagram?.meta?.openKind === true && <label className="kind-select">Diagram type<select aria-label="Diagram type" value={undecided ? '' : diagram.kind} onChange={event => chooseKind(diagram.id, event.target.value as DiagramKind)}>{undecided && <option value="">Choose…</option>}{umlFamilies.map(kind => <option key={kind} value={kind}>{getTemplate(kind)?.label ?? kind}</option>)}</select></label>}{native && undecided ? null : native && palette.length > 0 ? <div className="palette-list">{palette.map(kind => <button key={kind} title={`Add ${title(kind).toLowerCase()}`} aria-label={kind} onClick={() => beginElement(kind)}><Plus size={12} /><span>{paletteLabel(kind)}</span></button>)}</div> : <button className="text-button" onClick={openSource} disabled={!documentState}><Code2 size={14} /> Edit diagram source</button>}</div>
       </aside>}
       <main ref={canvas} className={`canvas-shell ${hand ? 'hand-tool' : 'select-tool'}`} aria-label="Diagram canvas" onPointerDownCapture={() => { relayoutFit.current = undefined; if (diagram) lastScene.current = diagram.id; }}>
         <ReactFlow<FlowNode, UmlEdge> nodes={native ? nodes : []} edges={native ? edges : []} nodeTypes={nodeTypes} edgeTypes={edgeTypes} proOptions={{ hideAttribution: true }}
@@ -698,8 +783,11 @@ export function App() {
           {menu.element && native && selectionCount <= 1 && menu.element.meta?.editable !== false && <button role="menuitem" onClick={() => requestRename(menu.element!.id)}>Rename <kbd>F2</kbd></button>}
           {menu.relation && selectionCount <= 1 && <button role="menuitem" onClick={() => editRelation(menu.relation!)}>Edit relationship</button>}
           {menu.element && native && selectionCount <= 1 && diagram?.kind === 'state' && menu.element.kind === 'state' && <><button role="menuitem" onClick={() => beginElement('initial', undefined, menu.element!.id)}>Mark as initial state</button><button role="menuitem" onClick={() => beginElement('final', undefined, menu.element!.id)}>Add final transition</button></>}
+          {native && !clipboardProblem && selectedNodes.length + (selectedId && !selectedEdges.includes(selectedId) ? 1 : 0) > 0 && (menu.element || !menu.relation) && <><button role="menuitem" onClick={() => clipboardKeys.current.actions.cut()}><Scissors size={13} /> Cut <kbd>{keyLabel('Mod+X')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.copy()}><Copy size={13} /> Copy <kbd>{keyLabel('Mod+C')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.duplicate()}><CopyPlus size={13} /> Duplicate <kbd>{keyLabel('Mod+D')}</kbd></button></>}
+          {native && !clipboardProblem && clip.current && <button role="menuitem" onClick={() => void pasteClip(clip.current)}><ClipboardPaste size={13} /> Paste <kbd>{keyLabel('Mod+V')}</kbd></button>}
+          {menu.element && native && selectionCount <= 1 && diagram && !declarationBlocker(diagram, 'Properties') && menu.element.meta?.editable !== false && !menu.element.implicit && !['start', 'end'].includes(menu.element.kind) && <button role="menuitem" onClick={() => { setPropertiesDraft({ element: menu.element!, version: documentState!.version, diagramId: diagram.id }); setMenu(undefined); }}><SlidersHorizontal size={13} /> Properties…</button>}
           {native && selectionCount > 0 && <><button role="menuitem" onClick={deleteSelection}><Trash2 size={13} /> {selectionCount > 1 ? `Delete ${selectionCount} items` : menu.relation ? 'Delete relationship' : 'Delete element'} <kbd>Del</kbd></button><div className="menu-divider" /></>}
-          {!menu.element && !menu.relation && native && !undecided && palette.filter(kind => !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, menu.point)}><Plus size={13} /> {kind}</button>)}
+          {!menu.element && !menu.relation && native && !undecided && palette.filter(kind => !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, menu.point)}><Plus size={13} /> {paletteLabel(kind)}</button>)}
           {Boolean(selectionCount <= 1 && menu.element && (menu.element.meta?.container || ['mindmap', 'wbs', 'files'].includes(diagram?.kind ?? '') || ['object', 'array'].includes(String(menu.element.meta?.dataType)))) && native && palette.filter(kind => !unnamedKinds.has(kind) && !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, undefined, menu.element!.id)}><Plus size={13} /> Add {kind} inside</button>)}
           {native && !menu.element && !menu.relation && nodes.length > 0 && <button role="menuitem" onClick={() => { select([...nodes.filter(node => node.selectable !== false).map(node => node.id), ...edges.map(edge => edge.id)]); setMenu(undefined); }}>Select all <kbd>Ctrl+A</kbd></button>}
           <button role="menuitem" onClick={openSource}><Code2 size={13} /> Edit PlantUML source</button>
@@ -708,6 +796,8 @@ export function App() {
         {elementDraft && <div className="floating-form nowheel" role="dialog" aria-label="Add element"><div className="form-heading"><span>Add {elementDraft.kind}</span><ToolButton title="Cancel adding element" onClick={() => setElementDraft(undefined)}><X size={15} /></ToolButton></div><form onSubmit={event => { event.preventDefault(); addElement(); }}><label>Name<input autoFocus aria-label="New element name" placeholder={`Name this ${elementDraft.kind}`} value={elementDraft.name} onChange={event => setElementDraft({ ...elementDraft, name: event.target.value })} onKeyDown={event => { if (event.key === 'Escape') setElementDraft(undefined); }} /></label><div className="form-actions"><button type="button" onClick={() => setElementDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!elementDraft.name.trim()}><Plus size={14} /> Add element</button></div></form></div>}
         {relationDraft && <div className="floating-form relation-form nowheel" role="dialog" aria-label="Edit relationship"><div className="form-heading"><span>{relationDraft.relationId ? 'Edit relationship' : 'Connect elements'}</span><ToolButton title="Cancel relationship" onClick={() => setRelationDraft(undefined)}><X size={15} /></ToolButton></div><form onSubmit={event => { event.preventDefault(); saveRelation(); }}><div className="connection-summary"><span>{diagram?.elements.find(element => element.id === relationDraft.source)?.name ?? relationDraft.source}</span><ArrowLeftRight size={14} /><span>{diagram?.elements.find(element => element.id === relationDraft.target)?.name ?? relationDraft.target}</span></div><label>Relationship<select aria-label="Relationship type" value={relationDraft.arrow} onChange={event => setRelationDraft({ ...relationDraft, arrow: event.target.value })}>{!(diagram && arrowTypes[diagram.kind] || structuralArrows).some(([arrow]) => arrow === relationDraft.arrow) && <option value={relationDraft.arrow}>{relationDraft.arrow}</option>}{(diagram && arrowTypes[diagram.kind] || structuralArrows).map(([arrow, name]) => <option key={arrow} value={arrow}>{name} ({arrow})</option>)}</select></label><label>Label<input aria-label="Relationship label" autoFocus placeholder="Optional label" value={relationDraft.label} onChange={event => setRelationDraft({ ...relationDraft, label: event.target.value })} /></label><div className="form-actions"><button type="button" onClick={() => setRelationDraft(undefined)}>Cancel</button><button className="primary" type="submit"><Check size={14} /> Apply</button></div></form></div>}
         {sourceOpen && <section className="source-panel nowheel" aria-label="PlantUML source editor"><div className="form-heading"><div><Code2 size={15} /><span>PlantUML source</span><small title={sourceTargetLabel}>{sourceTargetLabel} · {sourceDraft !== sourceBase ? 'Unsaved draft' : 'In sync'}</small></div><ToolButton title="Close source editor" onClick={() => setSourceOpen(false)}><X size={15} /></ToolButton></div>{sourceChanged && <div className="draft-notice">The document changed. Your draft is preserved. Reload the current source before making further changes.<button onClick={reloadSource}>Reload source</button></div>}<textarea aria-label="PlantUML source" spellCheck={false} value={sourceDraft} onChange={event => setSourceDraft(event.target.value)} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); commit({ type: 'replaceSource', source: sourceDraft }, sourceVersion, sourceDiagram); } if (event.key === 'Tab') { event.preventDefault(); const target = event.currentTarget, start = target.selectionStart, end = target.selectionEnd; setSourceDraft(sourceDraft.slice(0, start) + '  ' + sourceDraft.slice(end)); requestAnimationFrame(() => { target.selectionStart = target.selectionEnd = start + 2; }); } }} /><div className="source-footer"><span>Ctrl+Enter to apply · Escape leaves your draft</span><button className="primary" onClick={() => commit({ type: 'replaceSource', source: sourceDraft }, sourceVersion, sourceDiagram)} disabled={sourceDraft === sourceBase || Boolean(sourceChanged)}><Check size={13} /> Apply changes</button></div></section>}
+        {propertiesDraft && <PropertiesForm key={propertiesDraft.element.id} element={propertiesDraft.element} onCancel={() => setPropertiesDraft(undefined)} onApply={properties => void commit({ type: 'properties', elementId: propertiesDraft.element.id, ...properties }, propertiesDraft.version, propertiesDraft.diagramId).then(applied => { if (applied) setPropertiesDraft(undefined); })} />}
+        {showShortcuts && <ShortcutsPopover onClose={() => setShowShortcuts(false)} />}
         {error && <div className="error-toast" role="alert"><span>{error}</span><ToolButton title="Dismiss error" onClick={() => setError('')}><X size={14} /></ToolButton></div>}
         {busy && !error && <div className="connection-notice" role="status">{busy}</div>}
       </main>
