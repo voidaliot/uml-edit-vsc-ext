@@ -16,6 +16,7 @@ Create and edit diagrams directly in VS Code: rename a class, connect components
 - **Keep readable source.** Edit `.puml` files or use the source panel inside the canvas. Source edits update the diagram; visual edits update the corresponding source.
 - **Start from a template or from nothing.** Choose from 33 diagram families in a searchable gallery, with an example or blank, then switch between multiple diagram blocks in the same file.
 - **Your PlantUML stays plain PlantUML.** Manual positions go to a small layout file next to the diagram, so other tools and teammates without the extension see exactly the source you wrote.
+- **Edit like a drawing tool.** Copy, paste and duplicate, snap to guides while dragging, drop elements into packages, re-attach and bend relationships, and export SVG or PNG.
 - **Use familiar editor controls.** One undo/redo history for moves and edits, native VS Code save and unsaved-change handling, plus outline navigation, a minimap, zoom, fit, and **Re-layout**.
 - **Render locally.** No Java, Graphviz installation, PlantUML server, or remote rendering service is required.
 
@@ -84,7 +85,7 @@ An empty `@startuml` block does not say which diagram it is, so the canvas asks.
 | File | What it stores |
 | --- | --- |
 | `order.puml` | Your PlantUML source, exactly as written. Moving shapes never changes it. |
-| `order.puml.layout.json` | Manual positions and sizes, one element per line. Created only once you move something; removed again by **Re-layout**. |
+| `order.puml.layout.json` | Manual positions, sizes and relationship bends, one element per line. Created only once you move something; removed again by **Re-layout**. |
 
 Commit the layout file to share your arrangement, or ignore it and let everyone use the automatic layout. Renaming, moving or deleting a diagram in VS Code does the same to its layout file; outside VS Code, move both together. Pan and zoom stay in your workspace and are not shared. See the [layout file format](docs/layout-file-format.md).
 
@@ -98,6 +99,15 @@ Commit the layout file to share your arrangement, or ignore it and let everyone 
 | Select several | Shift-click or Ctrl/Cmd-click, drag a marquee, or **Ctrl+A** / **Cmd+A** |
 | Delete the selection | **Delete** or **Backspace**, the toolbar, or the context menu |
 | Align or distribute | Select two or more elements and use the arrange buttons in the toolbar |
+| Copy / cut / paste / duplicate | **Ctrl+C** / **X** / **V** / **D** (**Cmd** on macOS), or the context menu |
+| Add a connected element | Drag a connection handle onto empty canvas |
+| Re-attach a relationship | Select it and drag an end grip to another element |
+| Bend a relationship | Select it, drag the middle grip; double-click a bend to remove it |
+| Move into or out of a package | Drop the element on a package, drag it clear of its package, or **Move to…** in the context menu |
+| Place without snapping | Hold **Alt** while dragging |
+| Find an element | **Ctrl+F** / **Cmd+F** |
+| Export SVG or PNG | **Export image** in the toolbar |
+| Show all shortcuts | **?** |
 | Edit a relationship | Double-click its connector or label |
 | Reorder a sequence message | Drag its line or label up/down; focused labels also accept **↑** / **↓** |
 | Move or resize a sequence divider | Drag its label; select it and drag the left/right resize handle |
@@ -117,7 +127,7 @@ Sequence lifelines offer connection points at the message rows. Drag between lif
 
 Common labels, relationships, nested groups, and selected styles are supported. Full styling, arbitrary preprocessing, custom sprites, and external includes are not evaluated. Known C4 and ArchiMate macros are interpreted locally. Diagram layout and appearance use the native editor.
 
-Desktop and remote VS Code hosts are supported. A browser extension bundle for **vscode.dev** is not currently provided. Image and PDF export are not currently offered.
+Desktop and remote VS Code hosts are supported. A browser extension bundle for **vscode.dev** is not currently provided. Diagrams export as SVG and PNG; PDF export is not offered. Exported SVGs embed HTML and open in web browsers, so use PNG for tools such as Inkscape or office suites.
 
 See the [native editing reference](docs/native-editing.md) for the scope of each family and the [layout file format](docs/layout-file-format.md) for saved positions. The [bundled examples](examples/all-native.puml) include all 33 starter diagrams.
 

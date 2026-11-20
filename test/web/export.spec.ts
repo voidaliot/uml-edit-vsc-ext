@@ -101,3 +101,12 @@ test('export is unavailable while the canvas is empty', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'Choose a diagram type' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export image' })).toBeDisabled();
 });
+
+test('a selected relationship exports without the grips that reshape and re-attach it', async ({ page }) => {
+  await load(page, '@startuml\nclass Order\nclass LineItem\nOrder --> LineItem : contains\n@enduml\n');
+  await page.locator('.edge-label', { hasText: 'contains' }).click();
+  await expect(page.locator('.bend-grip')).not.toHaveCount(0);
+  const text = (await exportImage(page, 'SVG')).data.toString('utf8');
+  expect(text).toContain('contains');
+  expect(text).not.toMatch(/bend-grip|edge-grip|react-flow__edgeupdater|drag-overlay|drop-hint/);
+});

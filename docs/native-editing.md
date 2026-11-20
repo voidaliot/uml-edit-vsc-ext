@@ -4,7 +4,7 @@ For installation, screenshots, and a quick start, see the [README](../README.md)
 
 Native, editable UML diagrams built with React Flow and synchronized with PlantUML text files. The extension is independently implemented under MIT. It uses no PlantUML renderer, Java runtime, generated diagram images, or remote rendering service.
 
-**Status: 0.5.0 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
+**Status: 0.7.0 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
 
 ## Use in VS Code
 
@@ -74,6 +74,24 @@ New elements use their name as the alias where it is an identifier (`class Invoi
 
 State machines add their initial and final symbols to the selected state with **initial** / **final** in the palette, or from the state's context menu. Activity diagrams add **start** and **stop** from the palette.
 
+## Copying, connecting and reshaping
+
+Copy, cut, paste and duplicate (Ctrl/Cmd+C, X, V, D) work on the selection in class, object, use case, component, deployment, state and entity diagrams. A selection is its elements, everything inside selected containers, and the relationships whose two ends are both selected. A copy keeps its display name and gets a free alias (`class Order` becomes `class "Order" as Order2`); a paste is one source edit at the end of the diagram. The clipboard belongs to one editor tab and pastes into any diagram of the same type in that file. Families whose meaning depends on source order, such as sequence and activity diagrams, do not offer it.
+
+Dragging a connection onto empty canvas offers the element kinds that can be added and connected in one step, then asks for a name. Releasing on an element's body connects to it. A selected relationship shows a grip at each end: drag one to another element to re-attach that end. Only the endpoint token changes in the source, and the edit is refused when it would create or drop an element as a side effect. Structure-derived and macro-based families (activity, C4, ArchiMate, DOT) do not offer re-attaching.
+
+In the freely arranged families a selected relationship also shows a grip in the middle of each segment. Drag it to add a bend, drag a bend to move it, double-click a bend to remove it. Bends are placement, not source: they are saved in the layout file, undone like moves, and removed by **Re-layout**. They are absolute points and stay where they are when an end is moved.
+
+**Properties…** in an element's context menu sets or clears its stereotype and background colour on the declaration line.
+
+## Moving between containers
+
+Membership is where a declaration is written. Dropping an element on a different package, rectangle, node or composite state writes its declaration, with its body and the comments above it, into that container. While you drag, the target is outlined and a hint says what releasing will do. A container still follows a child that is dragged inside it; once the child is clearly outside, the container lets go and releasing moves the declaration to the top level, above its former container so that nothing refers to a later declaration. **Move to…** in the context menu lists the same targets. Elements that exist only as the end of a relationship, namespaces, and states inside concurrent regions cannot be moved this way.
+
+## Export
+
+**Export image** in the toolbar, and the commands **Aliot UML: Export Diagram as SVG…** / **PNG…**, save the whole current diagram at natural size with a margin, without selection or editing handles, on the theme background, a fixed light background, or transparent. PNG is drawn at twice the size. The SVG references nothing outside itself; it holds HTML in a `foreignObject`, which web browsers display and most vector editors and office suites do not, so use PNG there. Fonts are not embedded: a reader without the editor's font sees their system's sans-serif.
+
 ## Deleting
 
 Delete removes everything selected in one edit, with the relationships and member statements that referred to it. A container goes with its contents. In activity and SDL diagrams a decision, loop or fork is removed with its branches, from any of its symbols; one `elseif` alternative is removed alone. Flow lines there follow the structure and go with the elements they join. Deleting a sequence frame dissolves the frame and keeps its messages. Elements the editor only generates, such as a schedule axis, are skipped.
@@ -88,6 +106,9 @@ Delete removes everything selected in one edit, with the relationships and membe
 | Select several | Shift/Ctrl/Cmd-click, drag a marquee, or Ctrl/Cmd+A; Escape clears |
 | Delete | Delete or Backspace, the toolbar button, or the context menu; a whole selection is one undo step |
 | Align / distribute | Select two or more elements; use the arrange buttons that appear in the toolbar |
+| Snap | Dragged elements snap to others' edges and centres; hold Alt to place freely |
+| Find | Ctrl/Cmd+F filters the outline; Enter selects the first match |
+| Shortcut reference | `?` or the keyboard button in the toolbar |
 | Add child | Right-click a container, tree node or data collection |
 | Connect elements | Drag between connection handles |
 | Edit relationship | Double-click connector or label |

@@ -51,10 +51,11 @@ export function exportFileName(fileName: string, format: ExportFormat, diagram?:
 }
 
 /**
- * Editor chrome: connection handles, resize grips, selection rectangles, and the "attributes" and
- * "operations" hints, which only invite editing; an empty compartment itself is UML and stays.
+ * Editor chrome: connection handles, resize grips, selection rectangles, the grips that reshape or
+ * re-attach a selected relationship, drag guides, and the "attributes" and "operations" hints, which
+ * only invite editing; an empty compartment itself is UML and stays.
  */
-const CHROME = '.react-flow__handle, .react-flow__resize-control, .react-flow__edge-interaction, .react-flow__viewport-portal, .react-flow__nodesselection, .react-flow__selection, .member-placeholder';
+const CHROME = '.react-flow__handle, .react-flow__resize-control, .react-flow__edge-interaction, .react-flow__edgeupdater, .react-flow__viewport-portal, .react-flow__nodesselection, .react-flow__selection, .edge-grip, .bend-grip, .drag-overlay, .drop-hint, .member-placeholder';
 const DYNAMIC = /:(?:hover|active|focus|focus-visible|focus-within)\b/;
 
 /** The stylesheet rules that can apply to the exported tree; the editor's own rules are left out. */
