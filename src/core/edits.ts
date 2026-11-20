@@ -8,6 +8,7 @@ import { editLegacyActivity } from './legacy-activity';
 import { moveSequenceEvent, sequenceInsertionLine } from './sequence';
 import { pasteInsertionLine, pasteLines } from './clipboard';
 import { setProperties } from './properties';
+import { moveToContainer } from './containment';
 
 const memberKinds = new Set(['class', 'abstract class', 'interface', 'enum', 'annotation', 'object', 'entity']);
 const relationArrows = new Set(['-->', '->', '<--', '<-', '--', '..', '..>', '<..', '<|--', '--|>', '<|..', '..|>', '*--', '--*', 'o--', '--o', '||--o{', '}o--||', '||--||', '}o--o{', '-->>', '->>', '<->', '<-->']);
@@ -196,6 +197,9 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     return result;
   }
   if (edit.type === 'properties') return setProperties(source, block, edit.elementId, edit);
+  // Membership is where a declaration is written; the move refuses every family where it is not.
+  if (edit.type === 'moveToContainer') return moveToContainer(source, block, edit.elementId, edit.parentId);
+
   if (block.meta?.legacy) {
     const result = editLegacyActivity(source, block, edit);
     if (result !== undefined) return result;

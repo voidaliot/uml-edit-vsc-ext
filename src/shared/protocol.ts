@@ -54,7 +54,9 @@ export type DiagramEdit =
   | { type: 'insertSnippet'; source: string }
   /** Copied declarations and relationships, renamed to free aliases where they land. */
   | { type: 'paste'; kind: DiagramKind; source: string }
-  | { type: 'properties'; elementId: string; stereotype: string; color: string };
+  | { type: 'properties'; elementId: string; stereotype: string; color: string }
+  /** Write an element's declaration into another container's body, or at block level without `parentId`. */
+  | { type: 'moveToContainer'; elementId: string; parentId?: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;

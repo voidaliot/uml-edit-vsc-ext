@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alignBoxes, clearOfPinned, containerBounds, freeSpot, type Box } from '../src/webview/arrange';
+import { alignBoxes, clearOfPinned, containerBounds, dropContainer, freeSpot, snapBox, type Box } from '../src/webview/arrange';
 import type { DiagramElement } from '../src/shared/protocol';
 
 const element = (id: string, parentId?: string, container = false): DiagramElement => ({ id, name: id, kind: container ? 'package' : 'class', members: [], startLine: 0, endLine: 0, parentId, meta: container ? { container: true } : {} });
@@ -64,5 +64,73 @@ describe('arranging by hand', () => {
     const placed = [...pinned, ranked.get('clear')!, ...['hit', 'alsoHit'].map(id => ({ ...ranked.get(id)!, ...moved.get(id)! }))];
     for (let a = 0; a < placed.length; a++) for (let b = a + 1; b < placed.length; b++) expect(apart(placed[a], placed[b]), `${a}/${b}`).toBe(true);
     expect(clearOfPinned(ranked, []).size).toBe(0);
+  });
+});
+
+describe('dragging with guides', () => {
+  const others = [{ x: 0, y: 0, width: 100, height: 40 }, { x: 300, y: 200, width: 200, height: 80 }];
+
+  it('snaps the nearest edge or centre within the threshold and draws the shared lines', () => {
+    // Left edge 3px right of the first box's left edge; top 4px below the second box's top.
+    const { dx, dy, guides } = snapBox({ x: 3, y: 204, width: 100, height: 50 }, others, 6);
+    expect([dx, dy]).toEqual([-3, -4]);
+    // Same width as the first box: left, centre and right all line up, and the top meets the second box.
+    expect(guides.filter(guide => guide.axis === 'x').map(guide => guide.at)).toEqual([0, 50, 100]);
+    expect(guides.find(guide => guide.axis === 'x' && guide.at === 0)).toEqual({ axis: 'x', at: 0, from: 0, to: 250 });
+    expect(guides.filter(guide => guide.axis === 'y')).toEqual([{ axis: 'y', at: 200, from: 0, to: 500 }]);
+  });
+
+  it('lines up centres with centres and edges with edges of different sizes', () => {
+    expect(snapBox({ x: 352, y: 500, width: 100, height: 20 }, others, 6).dx).toBe(-2);
+    expect(snapBox({ x: 520, y: 500, width: 20, height: 20 }, others, 6).dx).toBe(0);
+    expect(snapBox({ x: 495, y: 500, width: 20, height: 20 }, others, 6).dx).toBe(5);
+  });
+
+  it('leaves boxes beyond the threshold, and fixed axes, alone', () => {
+    expect(snapBox({ x: 120, y: 120, width: 30, height: 30 }, others, 6)).toEqual({ dx: 0, dy: 0, guides: [] });
+    const fixed = snapBox({ x: 3, y: 204, width: 100, height: 50 }, others, 6, { x: false, y: true });
+    expect([fixed.dx, fixed.dy]).toEqual([0, -4]);
+    expect(fixed.guides.every(guide => guide.axis === 'y')).toBe(true);
+    expect(snapBox({ x: 3, y: 3, width: 10, height: 10 }, [], 6)).toEqual({ dx: 0, dy: 0, guides: [] });
+  });
+
+  it('stays cheap for a large diagram', () => {
+    const many = Array.from({ length: 200 }, (_, index) => ({ x: (index % 20) * 250, y: Math.floor(index / 20) * 160, width: 192, height: 80 }));
+    const started = performance.now();
+    for (let frame = 0; frame < 60; frame++) snapBox({ x: 1003 + frame, y: 482, width: 192, height: 80 }, many, 6);
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+});
+
+describe('dropping into and out of containers', () => {
+  const parents = new Map<string, string | undefined>([['Sales', undefined], ['Inner', 'Sales'], ['Billing', undefined], ['Locked', undefined]]);
+  const containers = new Map<string, Box>([['Sales', { x: 0, y: 0, width: 600, height: 400 }], ['Inner', { x: 300, y: 100, width: 260, height: 200 }], ['Billing', { x: 800, y: 0, width: 300, height: 300 }], ['Locked', { x: 0, y: 600, width: 300, height: 200 }]]);
+  const allowed = new Set(['Sales', 'Inner', 'Billing']);
+  const at = (x: number, y: number, current?: string, margin = 0) => dropContainer({ pointer: { x, y }, box: { x: x - 50, y: y - 20, width: 100, height: 40 }, original: 'Sales', current, containers, parents, allowed, margin });
+
+  it('keeps an element in its container while it is rearranged there', () => {
+    expect(at(100, 100, 'Sales')).toEqual({ parentId: 'Sales' });
+    // Hanging over the edge still belongs to the container, which grows around it.
+    expect(at(640, 380, 'Sales')).toEqual({ parentId: 'Sales' });
+  });
+
+  it('joins another container under the pointer, the innermost first', () => {
+    expect(at(900, 100, 'Sales')).toEqual({ parentId: 'Billing' });
+    expect(at(400, 200, 'Sales')).toEqual({ parentId: 'Inner' });
+    // Back over the outer container but still touching the inner one: it stays there.
+    expect(at(290, 200, 'Inner')).toEqual({ parentId: 'Inner' });
+    expect(at(150, 200, 'Inner')).toEqual({ parentId: 'Sales' });
+  });
+
+  it('falls to the top level once it is clear of its container', () => {
+    expect(at(700, 500, 'Sales')).toEqual({});
+    expect(at(700, 500)).toEqual({});
+    // A short way past the edge only grows the container; the gap must be clear.
+    expect(at(700, 500, 'Sales', 100)).toEqual({ parentId: 'Sales' });
+    expect(at(760, 500, 'Sales', 100)).toEqual({});
+  });
+
+  it('refuses a container the source cannot nest it in', () => {
+    expect(at(100, 700, 'Sales')).toEqual({ parentId: 'Sales', blocked: 'Locked' });
   });
 });

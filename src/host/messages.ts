@@ -24,6 +24,7 @@ export function validEdit(value: unknown): value is DiagramEdit {
     case 'insertSnippet': return text(value.source, 2 * 1024 * 1024);
     case 'paste': return text(value.kind, 100) && !!value.kind && text(value.source, 2 * 1024 * 1024);
     case 'properties': return id(value.elementId) && text(value.stereotype, 200) && text(value.color, 100);
+    case 'moveToContainer': return id(value.elementId) && (value.parentId === undefined || id(value.parentId));
     default: return false;
   }
 }

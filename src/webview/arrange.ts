@@ -70,6 +70,78 @@ export function alignBoxes(boxes: ReadonlyMap<string, Box>, how: Alignment): Map
   return result;
 }
 
+/** A line the dragged box was snapped to, drawn across the boxes that share it. */
+export interface Guide { axis: 'x' | 'y'; at: number; from: number; to: number }
+
+const edges = (start: number, size: number) => [start, start + size / 2, start + size];
+
+/**
+ * The smallest shift, at most `threshold` per axis, that lines up the moving box's left, centre or
+ * right (top, middle or bottom) with the same kind of line of another box, and the guides it makes.
+ * Axes the caller keeps fixed are never shifted. Linear in the number of boxes, so it runs per frame.
+ */
+export function snapBox(moving: Box, others: readonly Box[], threshold: number, free: { x: boolean; y: boolean } = { x: true, y: true }): { dx: number; dy: number; guides: Guide[] } {
+  const shift = (axis: 'x' | 'y'): number | undefined => {
+    const extent = axis === 'x' ? 'width' : 'height', own = edges(moving[axis], moving[extent]);
+    let best: number | undefined;
+    for (const other of others) for (const line of edges(other[axis], other[extent])) for (const mine of own) {
+      const delta = line - mine;
+      if (Math.abs(delta) <= threshold && (best === undefined || Math.abs(delta) < Math.abs(best))) best = delta;
+    }
+    return best;
+  };
+  const dx = free.x ? shift('x') : undefined, dy = free.y ? shift('y') : undefined;
+  const snapped = { ...moving, x: moving.x + (dx ?? 0), y: moving.y + (dy ?? 0) }, guides: Guide[] = [];
+  for (const [axis, delta] of [['x', dx], ['y', dy]] as const) {
+    if (delta === undefined) continue;
+    const extent = axis === 'x' ? 'width' : 'height', across = axis === 'x' ? 'y' : 'x', span = axis === 'x' ? 'height' : 'width';
+    for (const at of edges(snapped[axis], snapped[extent])) {
+      const sharing = others.filter(other => edges(other[axis], other[extent]).some(line => Math.abs(line - at) < .5));
+      if (!sharing.length) continue;
+      const all = [snapped, ...sharing];
+      guides.push({ axis, at, from: Math.min(...all.map(box => box[across])), to: Math.max(...all.map(box => box[across] + box[span])) });
+    }
+  }
+  return { dx: dx ?? 0, dy: dy ?? 0, guides };
+}
+
+export interface DropScene {
+  /** Pointer and dragged box in flow coordinates. */
+  pointer: Point; box: Box;
+  /** Where the element sits in the source, and where the drag currently shows it. */
+  original?: string; current?: string;
+  /** Every other container as it was drawn when the drag started. */
+  containers: ReadonlyMap<string, Box>; parents: ReadonlyMap<string, string | undefined>;
+  /** Containers the source edit accepts this element into. */
+  allowed: ReadonlySet<string>;
+  /** The clear gap past its container's box that takes an element out, so a short drag only grows the container. */
+  margin: number;
+}
+
+/**
+ * The container a dragged element belongs to while it is dragged. It stays in its container until it
+ * is a clear gap away from the box that container had, so it can be rearranged inside; it joins a different
+ * container under the pointer at once; once it is clear of its container it falls to the container
+ * under the pointer or the top level. A container that cannot take it blocks the move instead.
+ */
+export function dropContainer(scene: DropScene): { parentId?: string; blocked?: string } {
+  const { pointer, box, current, original, containers, parents, allowed, margin } = scene;
+  const inside = (outer: Box, x: number, y: number) => x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + outer.height;
+  const touches = (other: Box) => box.x < other.x + other.width + margin && other.x - margin < box.x + box.width && box.y < other.y + other.height + margin && other.y - margin < box.y + box.height;
+  const chain = (id: string | undefined) => { const ids: string[] = []; for (let at = id; at !== undefined && !ids.includes(at); at = parents.get(at)) ids.push(at); return ids; };
+  let hit: string | undefined, depth = -1, area = Infinity;
+  for (const [id, bounds] of containers) {
+    if (!inside(bounds, pointer.x, pointer.y)) continue;
+    const level = chain(id).length, size = bounds.width * bounds.height;
+    if (level > depth || level === depth && size < area) { hit = id; depth = level; area = size; }
+  }
+  const join = (id: string) => allowed.has(id) ? { parentId: id } : { parentId: original, blocked: id };
+  if (hit !== undefined && !chain(current).includes(hit)) return join(hit);
+  const home = current === undefined ? undefined : containers.get(current);
+  if (home && touches(home)) return { parentId: current };
+  return hit === undefined ? {} : join(hit);
+}
+
 const overlaps = (a: Box, b: Box, margin: number) => a.x < b.x + b.width + margin && b.x < a.x + a.width + margin && a.y < b.y + b.height + margin && b.y < a.y + a.height + margin;
 
 /**
