@@ -200,6 +200,14 @@ option { background: var(--panel); color: var(--text); }
 .context-menu button { display: flex; justify-content: flex-start; width: 100%; font-size: 11px; border: 0; background: transparent; padding: 7px 8px; border-radius: 3px; gap: 9px; text-align: left; text-transform: none; }
 .context-menu button:hover { background: var(--selected); color: var(--selected-text); }
 .context-menu button kbd { margin-left: auto; color: var(--muted); font-size: 10px; font-family: var(--font); }
+.context-subheading { padding: 7px 8px 3px; border-top: 1px solid var(--border); margin-top: 3px; color: var(--muted); font-size: 10px; }
+.context-menu button small { margin-left: auto; color: var(--muted); font-size: 10px; }
+.drag-overlay { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.snap-guide { stroke: var(--brand); stroke-width: 1; stroke-dasharray: 4 3; }
+.drop-target { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+.drop-target.blocked { fill: color-mix(in srgb, var(--vscode-errorForeground, #f5b3b3) 8%, transparent); stroke: var(--vscode-errorForeground, #f5b3b3); }
+.react-flow__panel.drop-hint { max-width: calc(100% - 30px); padding: 8px 13px; border: 1px solid var(--accent); border-radius: 5px; background: var(--raised); color: var(--text); font-size: 11px; pointer-events: none; }
+.react-flow__panel.drop-hint.blocked { border-color: var(--vscode-inputValidation-errorBorder, #bd6d6d); }
 .menu-divider { border-top: 1px solid var(--border); margin: 4px 5px; }
 .floating-form { position: absolute; width: 320px; max-width: calc(100% - 30px); top: 82px; left: 50%; transform: translateX(-50%); border: 1px solid var(--border); background: var(--panel); box-shadow: 0 10px 45px #00000035; border-radius: 7px; z-index: 45; }
 .form-heading { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--border); font-weight: 500; font-size: 12px; }

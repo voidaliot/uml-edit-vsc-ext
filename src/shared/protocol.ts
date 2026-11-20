@@ -51,7 +51,9 @@ export type DiagramEdit =
   /** One undoable step for a whole selection. */
   | { type: 'deleteElements'; elementIds: string[]; relationIds: string[] }
   | { type: 'replaceSource'; source: string }
-  | { type: 'insertSnippet'; source: string };
+  | { type: 'insertSnippet'; source: string }
+  /** Write an element's declaration into another container's body, or at block level without `parentId`. */
+  | { type: 'moveToContainer'; elementId: string; parentId?: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;

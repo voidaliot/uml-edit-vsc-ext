@@ -11,6 +11,7 @@ import { UmlNodeView, type UmlNode } from './nodes';
 import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
 import { prepareGraphPorts, relationHandles } from './connections';
 import { alignBoxes, clearOfPinned, containerBounds, freeformKinds, freeSpot, type Alignment, type Box } from './arrange';
+import { DragOverlay, MoveToMenu, dropFeedback, followDrag, groupPlacements, menuPlacement, nodeBox, snapDrag, startSession, usePointer, type DragFeedback, type DragSession } from './dragAssist';
 
 type FlowNode = UmlNode;
 type DocumentState = Extract<HostMessage, { type: 'document' }>;
@@ -71,6 +72,11 @@ export function App() {
   const positions = useRef<Record<string, Record<string, ElementPlacement>>>({});
   const dragStart = useRef<{ diagramId: string; version: number; positions: Record<string, Point> } | undefined>(undefined);
   const keyboardPlacement = useRef<{ diagramId: string; version: number; positions: Record<string, Point> } | undefined>(undefined);
+  const dragSession = useRef<DragSession | undefined>(undefined);
+  /** Places to save once a container move has produced this source. */
+  const followPlacement = useRef<{ diagramId: string; source: string; positions: Record<string, Point> } | undefined>(undefined);
+  const [dragFeedback, setDragFeedback] = useState<DragFeedback>();
+  const pointer = usePointer();
   const pendingPlacement = useRef<{ diagramId: string; knownIds: Set<string>; point?: Point } | undefined>(undefined);
   const reveal = useRef<string | undefined>(undefined);
   const kindsRef = useRef(kinds);
@@ -217,6 +223,14 @@ export function App() {
       if (movable && point) saved[added.id] = point;
       pendingPlacement.current = undefined; reveal.current = added.id;
       if (movable && point) send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
+    }
+    const follow = followPlacement.current;
+    if (follow?.diagramId === diagram.id && follow.source === documentState.source) {
+      // Saved against the edited source, after the move itself: undo takes the places back first.
+      followPlacement.current = undefined;
+      const basePositions = { ...saved };
+      for (const [id, point] of Object.entries(follow.positions)) saved[id] = { ...saved[id], ...point };
+      send({ type: 'layout', version: documentState.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
     }
     positions.current[diagram.id] = saved;
     const display: Record<string, Point> = Object.create(null);
@@ -501,13 +515,38 @@ export function App() {
     if (native) void flow.fitView({ nodes: [{ id: element.id }], padding: 1, maxZoom: 1, duration: 220 });
   };
 
-  const beginDrag = () => {
+  const beginDrag = (_event?: unknown, node?: FlowNode | FlowNode[], dragged?: FlowNode[]) => {
     if (diagram && documentState) dragStart.current = { diagramId: diagram.id, version: documentState.version, positions: Object.fromEntries(flow.getNodes().map(node => [node.id, { ...node.position }])) };
+    // Only an element dragged on its own can change container; a selection keeps its structure.
+    dragSession.current = diagram && documentState && freeform && node && !Array.isArray(node) && dragged?.length === 1 ? startSession(documentState.source, diagram, flow.getNodes(), node.id) : undefined;
+  };
+  /** Change an element's container; its new places are saved on the edited source, so undo takes them back before the edit. */
+  const moveIntoContainer = async (elementId: string, parentId: string | undefined, placements: Record<string, Point>, version: number, diagramId: string) => {
+    const edit: DiagramEdit = { type: 'moveToContainer', elementId, ...(parentId ? { parentId } : {}) };
+    if (Object.keys(placements).length) placements = { ...groupPlacements(flow.getNodes(), [flow.getNode(elementId)?.data.element.parentId, parentId], id => Object.hasOwn(positions.current[diagramId] ?? {}, id)), ...placements };
+    try { if (docRef.current && Object.keys(placements).length) followPlacement.current = { diagramId, positions: placements, source: applyDiagramEdit(docRef.current.source, diagramId, edit, { kind: kindsRef.current[diagramId] }) }; } catch { /* commit reports why the move is refused */ }
+    const applied = await commit(edit, version, diagramId);
+    if (!applied) followPlacement.current = undefined;
+    return applied;
+  };
+  const moveElementTo = (element: DiagramElement, parentId: string | undefined) => {
+    setMenu(undefined);
+    if (!diagram || !documentState) return;
+    // A hand-placed element is placed again inside its new container; an automatic one is laid out there.
+    void moveIntoContainer(element.id, parentId, Object.hasOwn(positions.current[diagram.id] ?? {}, element.id) ? menuPlacement(flow.getNodes(), element.id, parentId) : {}, documentState.version, diagram.id);
   };
   /** One element, or a whole selection when React Flow drags its bounding box. */
   const endDrag = async (node?: FlowNode) => {
     const started = dragStart.current;
     dragStart.current = undefined;
+    const session = dragSession.current;
+    dragSession.current = undefined; setDragFeedback(undefined);
+    if (node && session && !session.blocked && session.current !== session.original && started && diagram?.id === started.diagramId && started.version === docRef.current?.version) {
+      const placements = Object.fromEntries(flow.getNodes().filter(item => { const before = started.positions[item.id]; return before && (Math.abs(item.position.x - before.x) > .01 || Math.abs(item.position.y - before.y) > .01); }).map(item => [item.id, { ...item.position }]));
+      // A refused move puts everything back where the source and saved layout say it is.
+      if (!await moveIntoContainer(node.id, session.current, placements, started.version, started.diagramId)) setDocumentState(current => current && { ...current });
+      return;
+    }
     if (node?.data.element.kind === 'sequence-divider' && started && diagram?.id === started.diagramId) {
       const applied = await commit({ type: 'moveSequenceEvent', eventId: node.id, row: Math.max(0, Math.round((node.position.y - 137) / 52)) }, started.version, started.diagramId);
       const latest = parseDocument(docRef.current?.source ?? '', { kinds: kindsRef.current }).diagrams.find(block => block.id === started.diagramId);
@@ -531,9 +570,13 @@ export function App() {
   const fitContainers = (next: FlowNode[], moved: ReadonlySet<string>): FlowNode[] => {
     if (!moved.size || !diagram || !freeformKinds.has(diagram.kind)) return next;
     const byId = new Map(next.map(node => [node.id, node]));
-    const size = (node: FlowNode): Box => ({ ...node.position, width: Number(node.data.element.meta?.width ?? node.measured?.width ?? 192), height: Number(node.data.element.meta?.height ?? node.measured?.height ?? 80) });
-    const bounds = containerBounds(next.map(node => node.data.element), id => byId.has(id) ? size(byId.get(id)!) : undefined);
-    const affected = (id: string): boolean => next.some(node => node.data.element.parentId === id && (moved.has(node.id) || affected(node.id)));
+    const size = (node: FlowNode): Box => nodeBox(node);
+    // While a drag previews another container, the element is fitted into that one; the one it left
+    // fits its other contents, or keeps the box it had when nothing else is inside.
+    const session = dragSession.current;
+    const elements = next.map(node => session && node.id === session.id ? { ...node.data.element, parentId: session.current } : node.data.element);
+    const bounds = containerBounds(elements, id => session?.containers.get(id) ?? (byId.has(id) ? size(byId.get(id)!) : undefined));
+    const affected = (id: string): boolean => Boolean(session?.touched.has(id)) || elements.some(element => element.parentId === id && (moved.has(element.id) || affected(element.id)));
     return next.map(node => {
       const fitted = bounds.get(node.id);
       if (!fitted || !affected(node.id)) return node;
@@ -557,6 +600,14 @@ export function App() {
     if (!dragStart.current && diagram && documentState && changes.some(change => change.type === 'position' && change.position && change.dragging === false)) {
       keyboardPlacement.current = { diagramId: diagram.id, version: documentState.version, positions: Object.fromEntries(nodes.map(node => [node.id, { ...node.position }])) };
     }
+    // Snapping and container previews follow a pointer drag, including the release that ends it; Alt places freely.
+    const session = dragSession.current, dragging = Boolean(dragStart.current) && changes.some(change => change.type === 'position' && change.position);
+    const snapped = dragging && freeform && !pointer.current.alt ? snapDrag(changes, nodes, flow.getViewport().zoom, session?.touched) : undefined;
+    if (snapped) changes = snapped.changes;
+    const lead = session && changes.find(change => change.type === 'position' && change.id === session.id && change.position);
+    const leader = lead && nodes.find(node => node.id === session.id);
+    if (session && lead?.type === 'position' && leader) followDrag(session, flow.screenToFlowPosition(pointer.current), { ...nodeBox(leader), ...lead.position! }, flow.getViewport().zoom);
+    if (dragging) setDragFeedback({ guides: snapped?.guides ?? [], ...(session ? dropFeedback(session, nodes) : {}) });
     setNodes(previous => {
       const adjusted = changes.map(change => {
         if (change.type !== 'position' || !change.position) return change;
@@ -681,6 +732,7 @@ export function App() {
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--grid)" />
           {showMinimap && <MiniMap pannable zoomable nodeColor="var(--minimap-node)" maskColor="var(--minimap-mask)" style={{ background: 'var(--panel)' }} />}
           <EdgeMarkers />
+          <DragOverlay feedback={dragFeedback} />
         </ReactFlow>
         {!diagram && documentState && <div className="empty-state"><div className="empty-symbol"><Shapes size={34} strokeWidth={1} /></div><h1>{documentState.source.trim() ? 'Open the source to continue.' : 'Make your ideas clear.'}</h1><p>{documentState.source.trim() ? 'This file has no complete diagram block. You can edit its PlantUML source right here.' : 'Choose a native diagram type to start drawing.'}</p>{documentState.source.trim() ? <button className="primary" onClick={openSource}><Code2 size={15} /> Edit PlantUML source</button> : <button className="primary" onClick={() => setShowGallery(true)}><Plus size={15} /> Create a diagram</button>}<span>Class · Sequence · Activity · State · and more</span></div>}
         {native && diagram && nodes.length === 0 && (undecided
@@ -696,6 +748,7 @@ export function App() {
           {native && selectionCount > 0 && <><button role="menuitem" onClick={deleteSelection}><Trash2 size={13} /> {selectionCount > 1 ? `Delete ${selectionCount} items` : menu.relation ? 'Delete relationship' : 'Delete element'} <kbd>Del</kbd></button><div className="menu-divider" /></>}
           {!menu.element && !menu.relation && native && !undecided && palette.filter(kind => !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, menu.point)}><Plus size={13} /> {kind}</button>)}
           {Boolean(selectionCount <= 1 && menu.element && (menu.element.meta?.container || ['mindmap', 'wbs', 'files'].includes(diagram?.kind ?? '') || ['object', 'array'].includes(String(menu.element.meta?.dataType)))) && native && palette.filter(kind => !unnamedKinds.has(kind) && !['initial', 'final'].includes(kind)).map(kind => <button role="menuitem" key={kind} onClick={() => beginElement(kind, undefined, menu.element!.id)}><Plus size={13} /> Add {kind} inside</button>)}
+          {menu.element && native && freeform && selectionCount <= 1 && documentState && diagram && <MoveToMenu source={documentState.source} diagram={diagram} elementId={menu.element.id} onMove={parentId => moveElementTo(menu.element!, parentId)} />}
           {native && !menu.element && !menu.relation && nodes.length > 0 && <button role="menuitem" onClick={() => { select([...nodes.filter(node => node.selectable !== false).map(node => node.id), ...edges.map(edge => edge.id)]); setMenu(undefined); }}>Select all <kbd>Ctrl+A</kbd></button>}
           <button role="menuitem" onClick={openSource}><Code2 size={13} /> Edit PlantUML source</button>
           <button role="menuitem" onClick={() => { setMenu(undefined); setShowGallery(true); }}><FilePlus2 size={13} /> New diagram…</button>
