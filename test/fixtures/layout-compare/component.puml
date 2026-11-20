@@ -1,0 +1,26 @@
+@startuml
+package "Frontend" {
+  [Web app] as web
+  [Mobile app] as mobile
+}
+package "Backend" {
+  [API gateway] as gw
+  [Order service] as orders
+  [Billing service] as billing
+  [Notification service] as notify
+}
+database "Orders DB" as odb
+database "Billing DB" as bdb
+queue "Event bus" as bus
+cloud "Payment provider" as psp
+web --> gw : HTTPS
+mobile --> gw : HTTPS
+gw --> orders
+gw --> billing
+orders --> odb
+billing --> bdb
+orders --> bus : publishes
+bus --> notify
+bus --> billing
+billing --> psp
+@enduml

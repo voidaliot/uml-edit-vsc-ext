@@ -1,0 +1,50 @@
+@startuml
+package "Domain" {
+  abstract class Entity {
+    +id: UUID
+  }
+  class Order {
+    +number: String
+    +total(): Money
+    +submit()
+  }
+  class LineItem {
+    +quantity: int
+  }
+  class Customer {
+    +name: String
+    +email: String
+  }
+  class Product {
+    +sku: String
+    +price: Money
+  }
+  enum OrderStatus {
+    DRAFT
+    SUBMITTED
+    SHIPPED
+  }
+}
+package "Infrastructure" {
+  interface OrderRepository {
+    +save(order: Order)
+    +find(id: UUID): Order
+  }
+  class SqlOrderRepository
+  class EmailNotifier
+}
+interface Notifier
+Entity <|-- Order
+Entity <|-- Customer
+Entity <|-- Product
+Order "1" *-- "many" LineItem : contains
+LineItem --> Product
+Customer "1" --> "*" Order : places
+Order --> OrderStatus
+OrderRepository <|.. SqlOrderRepository
+OrderRepository ..> Order
+Notifier <|.. EmailNotifier
+Order ..> Notifier : notifies
+note "Aggregate root" as N1
+N1 .. Order
+@enduml

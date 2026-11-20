@@ -1,0 +1,17 @@
+@startuml
+[*] --> Idle
+Idle --> Connecting : connect
+Connecting --> Connected : success
+Connecting --> Idle : failure
+Connected --> Transferring : send
+Transferring --> Connected : done
+Transferring --> Error : timeout
+Connected --> Idle : disconnect
+Error --> Idle : reset
+Error --> [*] : abort
+state Connected {
+  [*] --> Ready
+  Ready --> Busy : work
+  Busy --> Ready : finished
+}
+@enduml

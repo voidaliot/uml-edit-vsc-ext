@@ -2,6 +2,7 @@ import type { DiagramBlock, DiagramElement, DiagramRelation, Point } from '../sh
 import { codeLines } from './syntax';
 import { measureLabel } from './label-metrics';
 import { clearCompoundSightlines } from './compound-layout';
+import { Graph, layout as dagreLayout } from '@dagrejs/dagre';
 
 interface Size { width: number; height: number }
 /** A bend sequence for one relationship, contributed by one nesting level. */
@@ -16,6 +17,12 @@ interface Link {
   side?: RouteFragment['side'];
 }
 const laneWidth = 18;
+
+/** Which engine ranks and orders one connected group. The scopes, containers and packing are shared. */
+export type GraphEngine = 'dagre' | 'native';
+let engine: GraphEngine = 'dagre';
+export const setGraphEngine = (value: GraphEngine): void => { engine = value; };
+export const graphEngine = (): GraphEngine => engine;
 const phantomPrefix = '\u0000outside:';
 const gap = 70;
 const siblingGap = 32;
@@ -325,6 +332,86 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
   return layout;
 }
 
+/**
+ * The same contract as arrangeComponent, ranked, ordered and positioned by dagre: network-simplex
+ * ranks, crossing minimisation and Brandes-Köpf coordinates. Same-rank hints (A -right-> B) are
+ * not something dagre expresses, so each run of them is laid out as one wide node.
+ */
+function arrangeWithDagre(ids: string[], links: Link[], sizes: Map<string, Size>, across: boolean, depth: number): Layout {
+  const main = across ? 'x' : 'y', cross = across ? 'y' : 'x';
+  const crossLinks = links.filter(edge => edge.axis === cross), mainLinks = links.filter(edge => edge.axis === main);
+  const crossRanks = ranks(ids, crossLinks, cross);
+  const mainSize = (id: string) => across ? sizes.get(id)!.width : sizes.get(id)!.height;
+  const crossSize = (id: string) => across ? sizes.get(id)!.height : sizes.get(id)!.width;
+  const rows = connected(ids, crossLinks).map(members => {
+    const order = members.sort((a, b) => crossRanks.get(a)! - crossRanks.get(b)! || ids.indexOf(a) - ids.indexOf(b));
+    const offsets = new Map<string, number>(); let breadth = 0;
+    order.forEach((id, index) => {
+      offsets.set(id, breadth); breadth += crossSize(id);
+      const next = order[index + 1];
+      if (next) breadth += Math.max(gap, ...crossLinks.filter(edge => edge.source === id && edge.target === next || edge.source === next && edge.target === id).map(edge => edge.clearance ?? gap));
+    });
+    return { key: order[0], order, offsets, breadth, depth: Math.max(...order.map(mainSize)) };
+  });
+  const rowOf = new Map(rows.flatMap(row => row.order.map(id => [id, row] as const)));
+  const labelled = mainLinks.some(edge => edge.relation?.label);
+  const graph = new Graph({ multigraph: true });
+  graph.setGraph({ rankdir: across ? 'LR' : 'TB', nodesep: siblingGap, edgesep: laneWidth, ranksep: across ? Math.max(gap, ...mainLinks.map(edge => edge.clearance ?? gap)) : labelled ? gap + 26 : gap, marginx: 0, marginy: 0 });
+  graph.setDefaultEdgeLabel(() => ({}));
+  for (const row of rows) graph.setNode(row.key, across ? { width: row.depth, height: row.breadth } : { width: row.breadth, height: row.depth });
+  const drawn: { link: Link; name: string; from: string; to: string }[] = [];
+  mainLinks.forEach((link, index) => {
+    const from = rowOf.get(link.source)!.key, to = rowOf.get(link.target)!.key;
+    if (from === to) return;
+    const name = `link-${index}`;
+    graph.setEdge(from, to, { minlen: 1, weight: link.relation ? 2 : 1 }, name);
+    drawn.push({ link, name, from, to });
+  });
+  // Outside neighbours stay beyond every rank: before each root, or after each leaf, of this scope.
+  const real = rows.filter(row => !row.key.startsWith(phantomPrefix));
+  for (const row of rows) {
+    if (!row.key.startsWith(phantomPrefix)) continue;
+    const before = row.key.startsWith(`${phantomPrefix}from:`);
+    for (const other of real) if (!(before ? graph.inEdges(other.key) : graph.outEdges(other.key))?.some(edge => !(before ? edge.v : edge.w).startsWith(phantomPrefix))) {
+      if (before) graph.setEdge(row.key, other.key, { minlen: 1, weight: 0 }, `outside-${row.key}-${other.key}`);
+      else graph.setEdge(other.key, row.key, { minlen: 1, weight: 0 }, `outside-${other.key}-${row.key}`);
+    }
+  }
+  dagreLayout(graph);
+  const points: Record<string, Point> = Object.create(null);
+  const bands: { center: number; start: number; end: number }[] = [];
+  for (const row of rows) {
+    const node = graph.node(row.key) as { x: number; y: number };
+    const origin = { [main]: node[main] - row.depth / 2, [cross]: node[cross] - row.breadth / 2 } as unknown as Point;
+    for (const id of row.order) points[id] = { [main]: origin[main] + (row.depth - mainSize(id)) / 2, [cross]: origin[cross] + row.offsets.get(id)! } as unknown as Point;
+    if (row.key.startsWith(phantomPrefix)) continue;
+    const band = bands.find(item => Math.abs(item.center - node[main]) < 1);
+    if (band) { band.start = Math.min(band.start, origin[main]); band.end = Math.max(band.end, origin[main] + row.depth); }
+    else bands.push({ center: node[main], start: origin[main], end: origin[main] + row.depth });
+  }
+  const routes: RouteFragment[] = drawn.filter(({ link }) => link.relation).flatMap(({ link, name, from, to }) => {
+    const path = (graph.edge(from, to, name) as { points?: Point[] }).points ?? [];
+    // Neighbouring ranks are joined directly; only the ranks a link skips need bends.
+    if (path.length <= 3) return [];
+    const forward = path.at(-1)![main] >= path[0][main];
+    const bends = path.slice(1, -1).flatMap(point => {
+      // Pass each skipped rank straight through, from its near edge to its far edge.
+      const band = bands.find(item => Math.abs(item.center - point[main]) < 1);
+      if (!band || band.end - band.start < 1) return [{ x: point.x, y: point.y }];
+      const enter = { [main]: band.start, [cross]: point[cross] } as unknown as Point, leave = { [main]: band.end, [cross]: point[cross] } as unknown as Point;
+      return forward ? [enter, leave] : [leave, enter];
+    });
+    return bends.length ? [{ relation: link.relation!, side: link.side ?? 'common', depth, points: link.flipped ? bends.reverse() : bends }] : [];
+  });
+  const kept = ids.filter(id => !id.startsWith(phantomPrefix));
+  for (const id of ids) if (id.startsWith(phantomPrefix)) delete points[id];
+  const bendPoints = routes.flatMap(route => route.points);
+  const minX = Math.min(...kept.map(id => points[id].x), ...bendPoints.map(point => point.x)), minY = Math.min(...kept.map(id => points[id].y), ...bendPoints.map(point => point.y));
+  for (const id of kept) { points[id].x -= minX; points[id].y -= minY; }
+  for (const point of bendPoints) { point.x -= minX; point.y -= minY; }
+  return { points, routes, width: Math.max(...kept.map(id => points[id].x + sizes.get(id)!.width), ...bendPoints.map(point => point.x)), height: Math.max(...kept.map(id => points[id].y + sizes.get(id)!.height), ...bendPoints.map(point => point.y)) };
+}
+
 /** Flow independent groups into rows (or columns for left-to-right diagrams). */
 function pack(components: Layout[], across: boolean, single: boolean): { offsets: Point[]; width: number; height: number } {
   const length = (layout: Layout) => across ? layout.height : layout.width, breadth = (layout: Layout) => across ? layout.width : layout.height;
@@ -421,7 +508,12 @@ export function layoutGraph(block: DiagramBlock): Record<string, Point> {
     const phantoms = [...new Set(links.flatMap(edge => [edge.source, edge.target]).filter(id => id.startsWith(phantomPrefix)))];
     const parts = connected([...roots, ...phantoms], links);
     const isolated = parts.filter(ids => ids.length === 1), linked = parts.filter(ids => ids.length > 1);
-    const components = linked.map(ids => arrangeComponent(ids, links.filter(edge => ids.includes(edge.source) && ids.includes(edge.target)), sizes, across, depth));
+    const components = linked.map(ids => {
+      const own = links.filter(edge => ids.includes(edge.source) && ids.includes(edge.target));
+      if (engine === 'native') return arrangeComponent(ids, own, sizes, across, depth);
+      // A graph the library cannot place must still draw.
+      try { return arrangeWithDagre(ids, own, sizes, across, depth); } catch { return arrangeComponent(ids, own, sizes, across, depth); }
+    });
     if (isolated.length) {
       // PlantUML packs isolated symbols as a compact gallery; independent boundaries form a row.
       const singles = isolated.map(([id]) => ({ id, ...sizes.get(id)! }));
