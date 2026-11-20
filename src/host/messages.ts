@@ -1,4 +1,5 @@
-import type { DiagramEdit, DiagramLayout, WebviewMessage } from '../shared/protocol';
+import type { DiagramEdit, DiagramLayout, ElementPlacement, Point, WebviewMessage } from '../shared/protocol';
+import { validateBends } from '../core/layout-file';
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max = 10000): value is string => typeof value === 'string' && value.length <= max;
@@ -33,7 +34,12 @@ export function validLayout(value: unknown): value is DiagramLayout {
   // PlantUML aliases may be names such as constructor or __proto__. Validate
   // their own data entries without reading aliases through an object's prototype.
   if (!Object.entries(value.positions).every(([key, point]) => id(key) && object(point) && Object.hasOwn(point, 'x') && Object.hasOwn(point, 'y') && safeNumber(point.x) && safeNumber(point.y) && ['width', 'height'].every(field => point[field] === undefined || safeNumber(point[field]) && Number(point[field]) > 0))) return false;
+  if (value.bends !== undefined && !validBends(value.bends)) return false;
   return value.viewport === undefined || (object(value.viewport) && safeNumber(value.viewport.x) && safeNumber(value.viewport.y) && typeof value.viewport.zoom === 'number' && value.viewport.zoom >= 0.05 && value.viewport.zoom <= 10);
+}
+
+function validBends(value: unknown): value is Record<string, Point[]> {
+  try { validateBends(value, 'bends'); return true; } catch { return false; }
 }
 
 export function validWebviewMessage(value: unknown): value is WebviewMessage {
@@ -44,24 +50,33 @@ export function validWebviewMessage(value: unknown): value is WebviewMessage {
     case 'redo': return true;
     case 'openSource': return value.line === undefined || (version(value.line) && value.line <= 1e7);
     case 'edit': return version(value.version) && id(value.diagramId) && validEdit(value.edit) && (value.kind === undefined || text(value.kind, 100));
-    case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions }));
+    case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions })) && (value.baseBends === undefined || validBends(value.baseBends));
     case 'create': return text(value.kind, 100) && (value.blank === undefined || typeof value.blank === 'boolean');
     default: return false;
   }
 }
 
-/** Rebase deliberate placements on the latest view so another panel's moves survive. */
-export function mergeLayoutPositions(latest: DiagramLayout, proposed: DiagramLayout, base?: DiagramLayout['positions']): DiagramLayout {
-  if (!base) return proposed;
-  const positions = Object.assign(Object.create(null), latest.positions) as DiagramLayout['positions'];
-  const keys = new Set([...Object.keys(base), ...Object.keys(proposed.positions)]);
-  for (const key of keys) {
-    const before = Object.hasOwn(base, key) ? base[key] : undefined;
-    const next = Object.hasOwn(proposed.positions, key) ? proposed.positions[key] : undefined;
-    if (before?.x === next?.x && before?.y === next?.y && before?.width === next?.width && before?.height === next?.height) continue;
-    if (next) positions[key] = next; else delete positions[key];
+/**
+ * Rebase deliberate placements on the latest view so another panel's moves survive. Bends change only
+ * with a message that names their baseline; any other layout message keeps the latest bends, because
+ * it may carry a stale copy of them.
+ */
+export function mergeLayoutPositions(latest: DiagramLayout, proposed: DiagramLayout, base?: DiagramLayout['positions'], baseBends?: DiagramLayout['bends']): DiagramLayout {
+  const { bends: carried, ...rest } = proposed;
+  const positions = base ? rebase<ElementPlacement>(latest.positions, proposed.positions, base, (before, next) => before?.x === next?.x && before?.y === next?.y && before?.width === next?.width && before?.height === next?.height) : proposed.positions;
+  const bends = carried && baseBends ? rebase(latest.bends ?? {}, carried, baseBends, (before, next) => JSON.stringify(before) === JSON.stringify(next)) : latest.bends;
+  return { ...rest, positions, ...(bends && Object.keys(bends).length ? { bends } : {}) };
+}
+
+/** Apply the entries that changed between base and proposed to latest. */
+function rebase<T>(latest: Record<string, T>, proposed: Record<string, T>, base: Record<string, T>, same: (before: T | undefined, next: T | undefined) => boolean): Record<string, T> {
+  const result = Object.assign(Object.create(null), latest) as Record<string, T>;
+  for (const key of new Set([...Object.keys(base), ...Object.keys(proposed)])) {
+    const before = Object.hasOwn(base, key) ? base[key] : undefined, next = Object.hasOwn(proposed, key) ? proposed[key] : undefined;
+    if (same(before, next)) continue;
+    if (next) result[key] = next; else delete result[key];
   }
-  return { ...proposed, positions };
+  return result;
 }
 
 /** Compute one narrow edit, retaining untouched text and avoiding whole-document rewrites. */

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as vscode from 'vscode';
 import { UmlEditorProvider } from '../../src/extension';
-import { parseLayoutFile, serializeLayoutFile } from '../../src/core/layout-file';
+import { bendKey, parseLayoutFile, serializeLayoutFile } from '../../src/core/layout-file';
 import type { HostMessage } from '../../src/shared/protocol';
 
 const source = '@startuml\nclass "Account" as A\nclass "Ledger" as B\nA --> B : records\n@enduml\n';
@@ -81,6 +81,20 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     for (let step = 0; step < 3; step++) first.send({ type: 'redo' });
     await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'Redo must replay the move, the rename and the second move.');
     console.log('PASS source edits and placement share one undo/redo history in order');
+
+    const bends = { [bendKey('A', 'B', 0)]: [{ x: 240, y: 30 }] };
+    const bent = async () => { const text = await read(layoutUri); try { return text === null ? null : parseLayoutFile(text)['diagram-1']?.bends ?? null; } catch { return undefined; } };
+    first.send({ type: 'layout', version: document.version, diagramId: 'diagram-1', basePositions: { A, B }, baseBends: {}, layout: { positions: { A, B }, bends } });
+    await eventually(async () => JSON.stringify(await bent()) === JSON.stringify(bends), 'A bend must be written to the layout file.');
+    await eventually(() => JSON.stringify(latest(second.messages).layouts['diagram-1']?.bends) === JSON.stringify(bends), 'A bend must reach split views.');
+    first.send({ type: 'undo' });
+    await eventually(async () => await bent() === null && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'Undo must remove the bend and keep the placements.');
+    first.send({ type: 'redo' });
+    await eventually(async () => JSON.stringify(await bent()) === JSON.stringify(bends), 'Redo must restore the bend.');
+    first.send({ type: 'undo' });
+    await eventually(async () => await bent() === null, 'The bend is undone again for the steps that follow.');
+    assert.equal(document.getText(), renamed, 'Bends never touch the PlantUML file.');
+    console.log('PASS relationship bends share the placement history');
 
     // Undo from the text editor or Edit menu reverts the rename only; the move made after it stays next.
     await vscode.commands.executeCommand('undo');

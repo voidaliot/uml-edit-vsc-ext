@@ -19,11 +19,12 @@ interface EditorSession {
   showSourceOnReady?: boolean;
 }
 
-type Positions = DiagramLayout['positions'];
 type Viewport = DiagramLayout['viewport'];
+/** What the layout file stores for one diagram: element positions and relationship bends. */
+type Placement = Pick<DiagramLayout, 'positions' | 'bends'>;
 
 /** One placement change. It is undone only while the source still reads as it did when the change was made. */
-interface LayoutStep { diagramId: string; before?: Positions; after?: Positions; sourceText: string }
+interface LayoutStep { diagramId: string; before?: Placement; after?: Placement; sourceText: string }
 
 interface LayoutState {
   /** The companion layout file; undefined for untitled documents, whose placement stays in memory. */
@@ -191,13 +192,13 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
           if (message.version !== undefined) requireDocumentVersion(document.version, message.version);
           if (!parseDocument(document.getText()).diagrams.some(item => item.id === message.diagramId)) return;
           const state = this.state(document), id = message.diagramId;
-          const current = state.positions[id]?.positions ?? Object.create(null) as Positions;
-          const layout = mergeLayoutPositions({ positions: current }, message.layout, message.basePositions);
+          const current: Placement = state.positions[id] ?? { positions: Object.create(null) };
+          const layout = mergeLayoutPositions(current, message.layout, message.basePositions, message.baseBends);
           if (layout.viewport) state.viewports[id] = { ...layout.viewport }; else delete state.viewports[id];
           this.scheduleViewports(document.uri, state);
-          if (!samePositions(current, layout.positions)) {
-            const step: LayoutStep = { diagramId: id, before: state.positions[id]?.positions, after: copyPositions(layout.positions), sourceText: document.getText() };
-            const positions = withPositions(state.positions, id, step.after);
+          if (!samePlacement(current, layout)) {
+            const step: LayoutStep = { diagramId: id, before: state.positions[id], after: copyPlacement(layout), sourceText: document.getText() };
+            const positions = withPlacement(state.positions, id, step.after);
             await this.writeLayoutFile(state, positions);
             state.positions = positions;
             state.undo.push(step);
@@ -254,7 +255,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
   private async applyStep(document: vscode.TextDocument, state: LayoutState, direction: 'undo' | 'redo'): Promise<void> {
     const stack = direction === 'undo' ? state.undo : state.redo;
     const step = stack.at(-1)!;
-    const positions = withPositions(state.positions, step.diagramId, direction === 'undo' ? step.before : step.after);
+    const positions = withPlacement(state.positions, step.diagramId, direction === 'undo' ? step.before : step.after);
     await this.writeLayoutFile(state, positions);
     state.positions = positions;
     stack.pop();
@@ -382,8 +383,8 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
 
   private editorLayouts(state: LayoutState): Layouts {
     const layouts: Layouts = Object.create(null);
-    for (const [id, layout] of Object.entries(state.positions)) layouts[id] = { positions: layout.positions };
-    for (const [id, viewport] of Object.entries(state.viewports)) if (viewport) layouts[id] = { positions: layouts[id]?.positions ?? Object.create(null), viewport };
+    for (const [id, layout] of Object.entries(state.positions)) layouts[id] = layout.bends ? { positions: layout.positions, bends: layout.bends } : { positions: layout.positions };
+    for (const [id, viewport] of Object.entries(state.viewports)) if (viewport) layouts[id] = layouts[id] ? { ...layouts[id], viewport } : { positions: Object.create(null), viewport };
     return layouts;
   }
 
@@ -418,20 +419,24 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
-function copyPositions(positions: Positions): Positions {
-  const result: Positions = Object.create(null);
-  for (const [id, point] of Object.entries(positions)) result[id] = { ...point };
-  return result;
+function copyPlacement(layout: Placement): Placement {
+  const positions: Placement['positions'] = Object.create(null);
+  for (const [id, point] of Object.entries(layout.positions)) positions[id] = { ...point };
+  if (!layout.bends) return { positions };
+  const bends: NonNullable<Placement['bends']> = Object.create(null);
+  for (const [key, points] of Object.entries(layout.bends)) bends[key] = points.map(point => ({ ...point }));
+  return { positions, bends };
 }
 
-function withPositions(current: Layouts, diagramId: string, positions: Positions | undefined): Layouts {
+function withPlacement(current: Layouts, diagramId: string, placement: Placement | undefined): Layouts {
   const result: Layouts = Object.assign(Object.create(null), current);
-  if (positions && Object.keys(positions).length) result[diagramId] = { positions };
+  if (placement && (Object.keys(placement.positions).length || Object.keys(placement.bends ?? {}).length)) result[diagramId] = placement;
   else delete result[diagramId];
   return result;
 }
 
-function samePositions(left: Positions, right: Positions): boolean {
-  const keys = Object.keys(left);
-  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && (['x', 'y', 'width', 'height'] as const).every(field => left[key][field] === right[key][field]));
+function samePlacement(left: Placement, right: Placement): boolean {
+  const keys = Object.keys(left.positions);
+  const positions = keys.length === Object.keys(right.positions).length && keys.every(key => Object.hasOwn(right.positions, key) && (['x', 'y', 'width', 'height'] as const).every(field => left.positions[key][field] === right.positions[key][field]));
+  return positions && JSON.stringify(left.bends ?? {}) === JSON.stringify(right.bends ?? {});
 }

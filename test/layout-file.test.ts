@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPlantUmlFile, layoutFileName, parseLayoutFile, positionsOf, serializeLayoutFile, validateSource } from '../src/core/layout-file';
+import { bendKey, bendKeyParts, isPlantUmlFile, layoutFileName, parseLayoutFile, positionsOf, relationBendKeys, serializeLayoutFile, validateSource } from '../src/core/layout-file';
 
 describe('layout file', () => {
   it('names the companion file after the full PlantUML file name', () => {
@@ -69,6 +69,68 @@ describe('layout file', () => {
     ];
     for (const [text, reason] of invalid) expect(() => parseLayoutFile(text), text).toThrow(reason);
     for (const width of [0, -1, Infinity, NaN, 1e8]) expect(() => serializeLayoutFile({ 'diagram-1': { positions: { divider: { x: 60, y: 70, width } } } })).toThrow();
+  });
+
+  it('writes relationship bends after the positions, one relationship per line, and reads them back', () => {
+    const bends = { [bendKey('Order', 'Line item', 0)]: [{ x: 10, y: 20 }, { x: 10.5, y: -40 }], [bendKey('Order', 'Line item', 1)]: [{ x: 0, y: 0 }] };
+    const layouts = { 'diagram-1': { positions: { Order: { x: 1, y: 2 } }, bends }, 'diagram-2': { positions: {}, bends: { [bendKey('a', 'b', 0)]: [{ x: 3, y: 4 }] } } };
+    const text = serializeLayoutFile(layouts)!;
+    expect(text).toBe([
+      '{',
+      '  "version": 1,',
+      '  "diagrams": {',
+      '    "diagram-1": {',
+      '      "positions": {',
+      '        "Order": { "x": 1, "y": 2 }',
+      '      },',
+      '      "bends": [',
+      '        { "source": "Order", "target": "Line item", "occurrence": 0, "points": [{ "x": 10, "y": 20 }, { "x": 10.5, "y": -40 }] },',
+      '        { "source": "Order", "target": "Line item", "occurrence": 1, "points": [{ "x": 0, "y": 0 }] }',
+      '      ]',
+      '    },',
+      '    "diagram-2": {',
+      '      "positions": {},',
+      '      "bends": [',
+      '        { "source": "a", "target": "b", "occurrence": 0, "points": [{ "x": 3, "y": 4 }] }',
+      '      ]',
+      '    }',
+      '  }',
+      '}',
+      '',
+    ].join('\n'));
+    expect(JSON.parse(JSON.stringify(parseLayoutFile(text)))).toEqual(layouts);
+    expect(positionsOf({ 'diagram-1': { positions: {}, bends, viewport: { x: 1, y: 1, zoom: 1 } } })['diagram-1']).toEqual({ positions: {}, bends });
+    // No bends, no field: older files and files without bends keep their exact form.
+    expect(serializeLayoutFile({ 'diagram-1': { positions: { A: { x: 1, y: 2 } }, bends: {} } })).toBe(serializeLayoutFile({ 'diagram-1': { positions: { A: { x: 1, y: 2 } } } }));
+    expect(serializeLayoutFile({ 'diagram-1': { positions: {}, bends: {} } })).toBeUndefined();
+  });
+
+  it('rejects malformed bends with a readable reason and ignores unknown bend fields', () => {
+    const file = (bends: unknown) => JSON.stringify({ version: 1, diagrams: { 'diagram-1': { positions: {}, bends } } });
+    expect(parseLayoutFile(file([{ source: 'A', target: 'B', occurrence: 0, points: [{ x: 1, y: 2, note: 'x' }], color: 'red' }]))['diagram-1'].bends).toEqual({ [bendKey('A', 'B', 0)]: [{ x: 1, y: 2 }] });
+    const invalid: [unknown, string][] = [
+      [{}, 'list'],
+      [[{ source: 'A', target: 'B', points: [{ x: 1, y: 2 }] }], 'occurrence'],
+      [[{ source: 'A', target: 'B', occurrence: '0', points: [{ x: 1, y: 2 }] }], 'occurrence'],
+      [[{ source: '', target: 'B', occurrence: 0, points: [{ x: 1, y: 2 }] }], 'identities'],
+      [[{ source: 'A', target: 'B', occurrence: -1, points: [{ x: 1, y: 2 }] }], 'non-negative'],
+      [[{ source: 'A', target: 'B', occurrence: 0, points: [] }], '1–200'],
+      [[{ source: 'A', target: 'B', occurrence: 0, points: [{ x: 1 }] }], 'finite bend'],
+      [[{ source: 'A', target: 'B', occurrence: 0, points: [{ x: 1, y: 1 }] }, { source: 'A', target: 'B', occurrence: 0, points: [{ x: 2, y: 2 }] }], 'repeats'],
+    ];
+    for (const [bends, reason] of invalid) expect(() => parseLayoutFile(file(bends)), JSON.stringify(bends)).toThrow(reason);
+    expect(() => serializeLayoutFile({ 'diagram-1': { positions: {}, bends: { 'A->B': [{ x: 1, y: 2 }] } } })).toThrow('relationship identity');
+  });
+
+  it('identifies a relationship by its ends and occurrence, not by its line', () => {
+    const relation = (id: string, source: string, target: string, startLine: number) => ({ id, source, target, label: '', arrow: '-->', startLine, endLine: startLine });
+    const before = relationBendKeys([relation('relation-3-0', 'A', 'B', 3), relation('relation-4-1', 'A', 'B', 4), relation('relation-5-2', 'B', 'A', 5)]);
+    expect([...before.values()]).toEqual([bendKey('A', 'B', 0), bendKey('A', 'B', 1), bendKey('B', 'A', 0)]);
+    // A relationship inserted above, between other elements, changes every line number but no key.
+    const after = relationBendKeys([relation('relation-3-0', 'C', 'D', 3), relation('relation-4-1', 'A', 'B', 4), relation('relation-5-2', 'A', 'B', 5), relation('relation-6-3', 'B', 'A', 6)]);
+    expect([after.get('relation-4-1'), after.get('relation-5-2'), after.get('relation-6-3')]).toEqual([...before.values()]);
+    expect(bendKeyParts(bendKey('a"b', 'c\nd', 2))).toEqual({ source: 'a"b', target: 'c\nd', occurrence: 2 });
+    expect(bendKeyParts('["A","B"]')).toBeUndefined();
   });
 
   it('limits source size', () => {

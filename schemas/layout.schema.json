@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/voidaliot/uml-edit-vsc-ext/schemas/layout.schema.json",
   "title": "Aliot UML layout file",
-  "description": "Manual element placements for the PlantUML file of the same name (order.puml → order.puml.layout.json). Elements without an entry use the automatic layout.",
+  "description": "Manual element placements and relationship bends for the PlantUML file of the same name (order.puml → order.puml.layout.json). Elements without an entry use the automatic layout.",
   "type": "object",
   "required": ["version", "diagrams"],
   "properties": {
@@ -29,6 +29,34 @@
                 "y": { "type": "number", "minimum": -10000000, "maximum": 10000000 },
                 "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000000, "description": "Resizable elements only, such as sequence dividers." },
                 "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000000 }
+              }
+            }
+          },
+          "bends": {
+            "type": "array",
+            "description": "Manual bend points of relationships, drawn instead of the automatic route. Re-layout removes them. Omitted when there are none.",
+            "maxItems": 20000,
+            "items": {
+              "type": "object",
+              "required": ["source", "target", "occurrence", "points"],
+              "properties": {
+                "source": { "type": "string", "minLength": 1, "maxLength": 1000, "description": "Identity of the element the relationship starts at, as in positions." },
+                "target": { "type": "string", "minLength": 1, "maxLength": 1000, "description": "Identity of the element the relationship ends at." },
+                "occurrence": { "type": "integer", "minimum": 0, "maximum": 20000, "description": "Which of the relationships from source to target, in source order: 0 for the first, 1 for the second, …" },
+                "points": {
+                  "type": "array",
+                  "description": "Absolute canvas coordinates of the bends, from source to target.",
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "items": {
+                    "type": "object",
+                    "required": ["x", "y"],
+                    "properties": {
+                      "x": { "type": "number", "minimum": -10000000, "maximum": 10000000 },
+                      "y": { "type": "number", "minimum": -10000000, "maximum": 10000000 }
+                    }
+                  }
+                }
               }
             }
           }

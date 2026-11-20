@@ -123,6 +123,61 @@ test('reconnecting refuses to lose an element that only the relationship declare
   expect(await source(page)).toBe('@startuml\nclass A\nclass C\nA --> B\n@enduml');
 });
 
+test('a selected relationship is shaped with bends that share the undo history and Re-layout clears', async ({ page }) => {
+  await load(page, '@startuml\nclass A\nclass B\nclass C\nA --> B : uses\n@enduml\n');
+  const path = page.locator('.react-flow__edge[data-id="relation-4-0"] path.react-flow__edge-path');
+  const straight = await path.getAttribute('d');
+  const line = center((await page.locator('.react-flow__edge[data-id="relation-4-0"] .react-flow__edge-interaction').boundingBox())!);
+  await page.mouse.click(line.x, line.y);
+  // One grip in the middle of the only segment; dragging it adds a bend there.
+  await expect(page.locator('.bend-grip.add')).toHaveCount(1);
+  const add = center((await page.locator('.bend-grip.add').boundingBox())!);
+  await page.mouse.move(add.x, add.y); await page.mouse.down(); await page.mouse.move(add.x - 220, add.y, { steps: 10 }); await page.mouse.up();
+  await expect(page.locator('.bend-grip:not(.add)')).toHaveCount(1);
+  await expect(page.locator('.bend-grip.add')).toHaveCount(2);
+  const bent = await path.getAttribute('d');
+  expect(bent).not.toBe(straight);
+  // Dragging the bend moves it; the source is never touched.
+  const bend = center((await page.locator('.bend-grip:not(.add)').boundingBox())!);
+  await page.mouse.move(bend.x, bend.y); await page.mouse.down(); await page.mouse.move(bend.x, bend.y - 70, { steps: 10 }); await page.mouse.up();
+  await expect(path).not.toHaveAttribute('d', bent!);
+  const moved = await path.getAttribute('d');
+  expect(await source(page)).toBe('@startuml\nclass A\nclass B\nclass C\nA --> B : uses\n@enduml');
+
+  await page.getByRole('button', { name: 'Undo (Ctrl+Z)' }).click();
+  await expect(path).toHaveAttribute('d', bent!);
+  await page.getByRole('button', { name: 'Undo (Ctrl+Z)' }).click();
+  await expect(path).toHaveAttribute('d', straight!);
+  await page.getByRole('button', { name: 'Redo (Ctrl+Shift+Z)' }).click();
+  await page.getByRole('button', { name: 'Redo (Ctrl+Shift+Z)' }).click();
+  await expect(path).toHaveAttribute('d', moved!);
+
+  // An edit above the relationship changes its line, not its bends.
+  await page.getByRole('button', { name: 'Edit PlantUML source in canvas' }).click();
+  await page.getByRole('textbox', { name: 'PlantUML source', exact: true }).fill('@startuml\nclass A\nclass B\nclass C\nC --> A\nA --> B : uses\n@enduml');
+  await page.getByRole('button', { name: 'Apply changes' }).click();
+  await page.getByRole('button', { name: 'Close source editor' }).click();
+  const shifted = page.locator('.react-flow__edge[data-id="relation-5-1"] path.react-flow__edge-path');
+  await expect(shifted).toHaveAttribute('d', /Q/);
+
+  // Double-clicking a bend removes it, without opening the relationship dialog.
+  await page.locator('.react-flow__edge[data-id="relation-5-1"]').dispatchEvent('click');
+  await page.locator('.bend-grip:not(.add)').dblclick();
+  await expect(shifted).not.toHaveAttribute('d', /Q/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Undo (Ctrl+Z)' }).click();
+  await expect(shifted).toHaveAttribute('d', /Q/);
+  await page.getByRole('button', { name: 'Re-layout diagram' }).click();
+  await expect(shifted).not.toHaveAttribute('d', /Q/);
+});
+
+test('sequence messages have no bend grips', async ({ page }) => {
+  await load(page, '@startuml\nparticipant Web\nparticipant Api\nWeb -> Api : load\n@enduml\n');
+  await page.getByRole('button', { name: /Edit relationship load/ }).click();
+  await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+  await expect(page.locator('.bend-grip')).toHaveCount(0);
+});
+
 test('structure-derived connections offer neither grips nor quick add', async ({ page }) => {
   await load(page, '@startuml\nstart\n:One;\n:Two;\nstop\n@enduml\n');
   const edge = page.locator('.react-flow__edge').first();

@@ -3,6 +3,7 @@ import { BaseEdge, EdgeLabelRenderer, useReactFlow, useStore, type Edge, type Ed
 import type { DiagramRelation, LineType, Point } from '../shared/protocol';
 import { RichText } from './RichText';
 import { connectorStroke, routeConnector, type ActivityRoute } from './routing';
+import { snapBend } from './connections';
 
 export type UmlEdge = Edge<{
   relation: DiagramRelation;
@@ -20,11 +21,55 @@ export type UmlEdge = Edge<{
   onSelect?: (id: string, extend: boolean) => void;
   /** Its ends can be dragged to another element. */
   reconnectable?: boolean;
+  /** Hand-placed bend points; they replace the automatic route. */
+  bends?: Point[];
+  /** Present where bends can be shaped by hand; an empty list removes them. */
+  onBends?: (relationId: string, points: Point[]) => void;
 }, 'uml'>;
 
 /** React Flow centres each reconnect anchor this far outside the end it moves; the grips sit on those anchors. */
 export const reconnectRadius = 10;
 const gripCenter = (x: number, y: number, side: string): Point => ({ x: x + (side === 'right' ? reconnectRadius : side === 'left' ? -reconnectRadius : 0), y: y + (side === 'bottom' ? reconnectRadius : side === 'top' ? -reconnectRadius : 0) });
+
+/**
+ * Grips for shaping a selected relationship: drag a bend to move it, drag the grip in the middle of a
+ * segment to add one there, double-click a bend to remove it. The drag previews through `onDraft`.
+ */
+function BendGrips({ id, start, end, bends, onDraft, onBends }: { id: string; start: Point; end: Point; bends: Point[]; onDraft: (points: Point[] | undefined) => void; onBends: (relationId: string, points: Point[]) => void }) {
+  const flow = useReactFlow();
+  const cancel = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => cancel.current?.(), []);
+  const route = [start, ...bends, end];
+  const drag = (event: ReactPointerEvent, index: number, added?: Point) => {
+    if (event.button !== 0) return;
+    event.stopPropagation(); event.preventDefault();
+    cancel.current?.();
+    const initial = added ? [...bends.slice(0, index), added, ...bends.slice(index)] : bends;
+    const from = { x: event.clientX, y: event.clientY }, zoom = flow.getZoom();
+    let current: Point[] | undefined;
+    const move = (next: PointerEvent) => {
+      if (!current && Math.hypot(next.clientX - from.x, next.clientY - from.y) < 3) return;
+      const neighbours = [index ? initial[index - 1] : start, index < initial.length - 1 ? initial[index + 1] : end];
+      current = initial.map((point, at) => at === index ? snapBend(flow.screenToFlowPosition({ x: next.clientX, y: next.clientY }), neighbours, 6 / zoom) : point);
+      onDraft(current);
+    };
+    const cleanup = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', finish); window.removeEventListener('pointercancel', stop); cancel.current = undefined; };
+    const stop = () => { cleanup(); onDraft(undefined); };
+    const finish = () => { cleanup(); onDraft(undefined); if (current) onBends(id, current); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', stop);
+    cancel.current = stop;
+  };
+  const place = (point: Point) => ({ transform: `translate(-50%, -50%) translate(${point.x}px,${point.y}px)` });
+  return <EdgeLabelRenderer>
+    {route.slice(1).map((point, index) => {
+      const middle = { x: (route[index].x + point.x) / 2, y: (route[index].y + point.y) / 2 };
+      return <div key={`add-${index}`} className="bend-grip add nodrag nopan" style={place(middle)} title="Drag to add a bend" aria-label="Add a bend" onPointerDown={event => drag(event, index, middle)} />;
+    })}
+    {bends.map((point, index) => <div key={`bend-${index}`} className="bend-grip nodrag nopan" style={place(point)} title="Drag to move this bend; double-click to remove it" aria-label="Bend" onPointerDown={event => drag(event, index)} onDoubleClick={event => { event.stopPropagation(); onBends(id, bends.filter((_, at) => at !== index)); }} />)}
+  </EdgeLabelRenderer>;
+}
 
 function marker(arrow: string, side: 'start' | 'end'): string | undefined {
   const part = side === 'start' ? arrow.split(/[-.]/)[0] : arrow.split(/[-.]/).at(-1)!;
@@ -49,6 +94,8 @@ export function UmlEdgeView({ id, source, target, sourceX, sourceY, targetX, tar
     return near(source, anchor.source) && near(target, anchor.target);
   });
   const [dragOffset, setDragOffset] = useState(0);
+  const [bendDraft, setBendDraft] = useState<Point[]>();
+  const bends = bendDraft ?? data?.bends;
   const cancelDrag = useRef<(() => void) | undefined>(undefined);
   const dragged = useRef(false);
   useEffect(() => () => cancelDrag.current?.(), []);
@@ -97,7 +144,7 @@ export function UmlEdgeView({ id, source, target, sourceX, sourceY, targetX, tar
     labelY = y - 13;
     if (source === target) { path = `M ${sourceX} ${y} h 60 v ${targetY - sourceY} h -60`; labelX = sourceX + 65; labelY = y + 15; }
     else path = `M ${sourceX} ${y} L ${targetX} ${y}`;
-  } else ({ path, labelX, labelY } = routeConnector({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }, lineType, activity ?? structuredRoute, source === target, anchored ? relation.meta?.route as Point[] : [], data?.labelAt));
+  } else ({ path, labelX, labelY } = routeConnector({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }, lineType, activity ?? structuredRoute, source === target, bends?.length ? bends : anchored ? relation.meta?.route as Point[] : [], data?.labelAt));
   // Parallel links hang their labels on opposite sides instead of on one midpoint.
   const upright = Math.abs(targetY - sourceY) >= Math.abs(targetX - sourceX), side = data?.labelSide ?? 0;
   const labelAnchor = !side ? 'translate(-50%, -50%)' : upright ? `translate(${side < 0 ? 'calc(-100% - 5px)' : '5px'}, -50%)` : `translate(-50%, ${side < 0 ? 'calc(-100% - 3px)' : '3px'})`;
@@ -107,6 +154,7 @@ export function UmlEdgeView({ id, source, target, sourceX, sourceY, targetX, tar
   return <>
     <g className={data?.onMoveSequence ? 'sequence-message-drag nodrag nopan' : undefined} onPointerDown={startDrag}><BaseEdge id={id} path={path} markerStart={marker(arrow, 'start')} markerEnd={schedule ? 'url(#uml-schedule-arrow)' : activity ? 'url(#uml-flow-arrow)' : marker(arrow, 'end')} style={{ stroke: selected ? 'var(--accent)' : 'var(--diagram-line)', strokeWidth: stroke.bold ? 3 : selected ? 2 : activity || schedule ? 1.2 : 1.5, strokeDasharray: stroke.strokeDasharray }} interactionWidth={18} /></g>
     <EdgeLabelRenderer><button className={`edge-label nodrag nopan ${data?.onMoveSequence ? 'sequence-message-label' : ''} ${activity ? 'activity-edge-label' : ''} ${selected ? 'selected' : ''} ${!relation.label ? 'empty-label' : ''}`} style={{ transform: `${labelAnchor} translate(${labelX}px,${labelY}px)` }} onPointerDown={startDrag} onKeyDown={event => { if (data?.onMoveSequence && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); void data.onMoveSequence(relation, Math.max(0, data.sequenceIndex! + (event.key === 'ArrowUp' ? -1 : 1)), data.version!, data.diagramId!); } }} onDoubleClick={event => { event.stopPropagation(); data?.onEdit(relation); }} onClick={event => { if (dragged.current) { dragged.current = false; return; } if (event.detail === 1 && !relation.label && selected) data?.onEdit(relation); else if (event.detail === 1) data?.onSelect?.(id, event.shiftKey || event.ctrlKey || event.metaKey); }} aria-label={`Edit relationship${relation.label ? ` ${relation.label}` : ` from ${source} to ${target}`}`} title={data?.onMoveSequence ? 'Drag up or down to reorder; double-click to edit message' : 'Double-click to edit relationship'}>{relation.meta?.number !== undefined && <b>{String(relation.meta.number)}. </b>}<RichText text={relation.label || (selected ? '+ label' : '')} /></button></EdgeLabelRenderer>
+    {selected && data?.onBends && data.sequenceIndex === undefined && !activity && !schedule && source !== target && <BendGrips id={id} start={{ x: sourceX, y: sourceY }} end={{ x: targetX, y: targetY }} bends={bends ?? []} onDraft={setBendDraft} onBends={data.onBends} />}
     {selected && data?.reconnectable && [gripCenter(sourceX, sourceY, sourcePosition), gripCenter(targetX, targetY, targetPosition)].map((point, index) => <circle key={index} className="edge-grip" cx={point.x} cy={point.y} r={4.5} />)}
     {(relation.sourceMultiplicity || relation.targetMultiplicity) && <EdgeLabelRenderer>{relation.sourceMultiplicity && <span className="multiplicity" style={{ transform: `translate(${sourceCardinality.x}px,${sourceCardinality.y}px)` }}>{relation.sourceMultiplicity}</span>}{relation.targetMultiplicity && <span className="multiplicity" style={{ transform: `translate(${targetCardinality.x}px,${targetCardinality.y}px)` }}>{relation.targetMultiplicity}</span>}</EdgeLabelRenderer>}
   </>;

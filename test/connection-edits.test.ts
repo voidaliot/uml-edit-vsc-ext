@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseDocument } from '../src/core/parser';
 import { applyDiagramEdit } from '../src/core/edits';
-import { validEdit, validWebviewMessage } from '../src/host/messages';
+import { mergeLayoutPositions, validEdit, validWebviewMessage } from '../src/host/messages';
+import { bendKey } from '../src/core/layout-file';
+import { bentHandles, interactiveEdges, snapBend } from '../src/webview/connections';
 import type { DiagramEdit } from '../src/shared/protocol';
 
 const uml = (body: string) => `@startuml\n${body}\n@enduml\n`;
@@ -120,5 +122,55 @@ describe('connection edit messages', () => {
     expect(validEdit({ type: 'reconnectRelation', relationId: 'relation-3-0', end: 'middle', elementId: 'C' })).toBe(false);
     expect(validEdit({ type: 'reconnectRelation', relationId: 'relation-3-0', end: 'source' })).toBe(false);
     expect(validWebviewMessage({ type: 'edit', version: 1, diagramId: 'diagram-1', edit: { type: 'reconnectRelation', relationId: 'r', end: 'source', elementId: 'A' } })).toBe(true);
+  });
+});
+
+describe('relationship bends in layout messages', () => {
+  const ab = bendKey('A', 'B', 0), bc = bendKey('B', 'C', 0);
+  it('merges a bend change against its baseline, so bends shaped in another panel survive', () => {
+    const latest = { positions: { A: { x: 1, y: 1 } }, bends: { [ab]: [{ x: 5, y: 5 }], [bc]: [{ x: 9, y: 9 }] } };
+    const merged = mergeLayoutPositions(latest, { positions: { A: { x: 1, y: 1 } }, bends: { [ab]: [{ x: 6, y: 6 }] } }, { A: { x: 1, y: 1 } }, { [ab]: [{ x: 5, y: 5 }] });
+    expect(merged).toEqual({ positions: { A: { x: 1, y: 1 } }, bends: { [ab]: [{ x: 6, y: 6 }], [bc]: [{ x: 9, y: 9 }] } });
+    // Removing the last bend removes the field.
+    expect(mergeLayoutPositions({ positions: {}, bends: { [ab]: [{ x: 5, y: 5 }] } }, { positions: {}, bends: {} }, {}, { [ab]: [{ x: 5, y: 5 }] })).toEqual({ positions: {} });
+  });
+
+  it('keeps the latest bends for every message that does not name a bend baseline', () => {
+    const latest = { positions: {}, bends: { [ab]: [{ x: 5, y: 5 }] } };
+    expect(mergeLayoutPositions(latest, { positions: { A: { x: 2, y: 2 } } }, {}).bends).toEqual(latest.bends);
+    expect(mergeLayoutPositions(latest, { positions: { A: { x: 2, y: 2 } }, bends: {} }).bends).toEqual(latest.bends);
+    expect(mergeLayoutPositions({ positions: {} }, { positions: {}, bends: { [ab]: [{ x: 1, y: 1 }] } })).toEqual({ positions: {} });
+  });
+
+  it('leaves each element toward its nearest bend and snaps a dragged bend onto its neighbours', () => {
+    const box = { x: 0, y: 0, width: 200, height: 80 }, far = { x: 600, y: 0, width: 200, height: 80 };
+    expect(bentHandles([{ x: 100, y: -200 }, { x: 700, y: 300 }], box, far)).toEqual({ sourceHandle: 'top', targetHandle: 'bottom' });
+    expect(bentHandles([{ x: -100, y: 40 }], box, far)).toEqual({ sourceHandle: 'left', targetHandle: 'left' });
+    expect(snapBend({ x: 104, y: 57 }, [{ x: 100, y: 10 }, { x: 300, y: 60 }], 6)).toEqual({ x: 100, y: 60 });
+    expect(snapBend({ x: 120, y: 30 }, [{ x: 100, y: 10 }], 6)).toEqual({ x: 120, y: 30 });
+  });
+
+  it('offers end grips and bend grips only on the selected relationship of a diagram that allows them', () => {
+    const relation = { id: 'relation-3-0', source: 'A', target: 'B', label: '', arrow: '-->', startLine: 3, endLine: 3 };
+    const edge = (selected: boolean) => ({ id: relation.id, source: 'A', target: 'B', type: 'uml' as const, selected, data: { relation, onEdit: () => {} } });
+    const node = (id: string, x: number) => ({ id, type: 'uml' as const, position: { x, y: 0 }, data: { element: { id, name: id, kind: 'class', members: [], startLine: 1, endLine: 1 }, diagramId: 'diagram-1', version: 1, onRename: async () => true, onMembers: async () => true } });
+    const options = { relinkable: true, bendable: true, bends: { [ab]: [{ x: 300, y: -100 }] }, keys: new Map([[relation.id, ab]]), onBends: () => {} };
+    const [selected] = interactiveEdges([edge(true)], [node('A', 0), node('B', 600)], options);
+    expect(selected).toMatchObject({ reconnectable: true, sourceHandle: 'top', targetHandle: 'left', data: { reconnectable: true, bends: [{ x: 300, y: -100 }] } });
+    expect(selected.data?.onBends).toBe(options.onBends);
+    const unselected = edge(false), [idle] = interactiveEdges([unselected], [node('A', 0), node('B', 600)], { ...options, bends: {} });
+    expect(idle).toBe(unselected);
+    // Where neither gesture applies, stored bends are not drawn either and the edge is left as built.
+    const chosen = edge(true), [locked] = interactiveEdges([chosen], [node('A', 0), node('B', 600)], { ...options, relinkable: false, bendable: false });
+    expect(locked).toBe(chosen);
+  });
+
+  it('validates bends and their baseline in layout messages', () => {
+    const message = (layout: unknown, extra: Record<string, unknown> = {}) => validWebviewMessage({ type: 'layout', diagramId: 'diagram-1', layout, ...extra });
+    expect(message({ positions: {}, bends: { [ab]: [{ x: 1, y: 2 }] } }, { baseBends: {} })).toBe(true);
+    expect(message({ positions: {}, bends: { 'A->B': [{ x: 1, y: 2 }] } })).toBe(false);
+    expect(message({ positions: {}, bends: { [ab]: [] } })).toBe(false);
+    expect(message({ positions: {}, bends: { [ab]: [{ x: 'a', y: 2 }] } })).toBe(false);
+    expect(message({ positions: {} }, { baseBends: { [ab]: [{ x: Infinity, y: 2 }] } })).toBe(false);
   });
 });
