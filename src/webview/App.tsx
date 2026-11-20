@@ -467,7 +467,7 @@ export function App() {
       if (event.key === 'Escape') { setShowShortcuts(false); setPropertiesDraft(undefined); }
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       const key = event.key.toLowerCase();
-      if (key === 'f') { event.preventDefault(); setShowOutline(true); requestAnimationFrame(() => filterInput.current?.select()); return; }
+      if (key === 'f') { event.preventDefault(); setShowOutline(true); if (filterInput.current) filterInput.current.select(); else requestAnimationFrame(() => filterInput.current?.select()); return; }
       const action = ({ c: 'copy', x: 'cut', v: 'paste', d: 'duplicate' } as const)[key as 'c'];
       // Selected text anywhere else on the page keeps the browser's own copy.
       if (!action || (action === 'copy' || action === 'cut') && textSelected()) return;
