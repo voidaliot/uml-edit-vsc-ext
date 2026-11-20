@@ -142,7 +142,7 @@ export function dropContainer(scene: DropScene): { parentId?: string; blocked?: 
   return hit === undefined ? {} : join(hit);
 }
 
-const overlaps = (a: Box, b: Box, margin: number) => a.x < b.x + b.width + margin && b.x < a.x + a.width + margin && a.y < b.y + b.height + margin && b.y < a.y + a.height + margin;
+export const overlaps = (a: Box, b: Box, margin: number) => a.x < b.x + b.width + margin && b.x < a.x + a.width + margin && a.y < b.y + b.height + margin && b.y < a.y + a.height + margin;
 
 /**
  * Automatic positions for elements that would otherwise sit on a hand-placed one. The layout ranks

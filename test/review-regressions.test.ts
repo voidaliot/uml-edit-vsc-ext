@@ -117,3 +117,26 @@ describe('bends stay with the relationship they were drawn for', () => {
     expect(shiftBends(bends, { A: { x: 0, y: 0 }, B: { x: 0, y: 0 } })).toBeUndefined();
   });
 });
+
+describe('moving a declaration keeps it above the lines that name it', () => {
+  it('refuses a move below a relationship or member line that mentions the element', () => {
+    const late = uml('class A\nclass B\nA --> B\npackage P {\n}');
+    expect(() => applyDiagramEdit(late, 'diagram-1', { type: 'moveToContainer', elementId: 'B', parentId: 'P' })).toThrow(/"B" is named by a line above/);
+    const member = uml('class A\nA : +id\npackage P {\n}');
+    expect(() => applyDiagramEdit(member, 'diagram-1', { type: 'moveToContainer', elementId: 'A', parentId: 'P' })).toThrow(/named by a line above|would leave syntax/);
+    // A state whose transition stays behind in the composite it leaves.
+    const states = uml('state Outer {\n  state In1\n  [*] --> In1\n}\nstate Other {\n}');
+    expect(() => applyDiagramEdit(states, 'diagram-1', { type: 'moveToContainer', elementId: 'In1', parentId: 'Other' })).toThrow(/named by a line above/);
+  });
+
+  it('moves freely when the declaration stays first', () => {
+    const early = uml('package P {\n}\nclass A\nclass B\nA --> B');
+    expect(applyDiagramEdit(early, 'diagram-1', { type: 'moveToContainer', elementId: 'B', parentId: 'P' })).toBe(uml('package P {\n  class B\n}\nclass A\nA --> B'));
+    // Taking an element out writes it above its former container, so it is still declared first.
+    const inside = uml('package P {\n  class A\n  class B\n  A --> B\n}');
+    expect(applyDiagramEdit(inside, 'diagram-1', { type: 'moveToContainer', elementId: 'B' })).toBe(uml('class B\npackage P {\n  class A\n  A --> B\n}'));
+    // A file that already names an element before declaring it is not made worse, so it still moves.
+    const already = uml('A --> B\nclass B\npackage P {\n}');
+    expect(applyDiagramEdit(already, 'diagram-1', { type: 'moveToContainer', elementId: 'B', parentId: 'P' })).toContain('package P {\n  class B\n}');
+  });
+});

@@ -1,6 +1,7 @@
 import type { DiagramBlock } from '../shared/protocol';
 import { declarationBlocker } from './clipboard';
 import { codeLines, parseDeclaration } from './syntax';
+import { pseudoKinds } from './kinds';
 
 export interface ElementProperties { stereotype: string; color: string }
 
@@ -26,7 +27,7 @@ export function setProperties(source: string, block: DiagramBlock, elementId: st
   if (problem) throw new Error(problem);
   const element = block.elements.find(candidate => candidate.id === elementId);
   if (!element) throw new Error('This element no longer exists. Try the edit again on the current diagram.');
-  if (element.meta?.editable === false || ['start', 'end'].includes(element.kind)) throw new Error('This symbol has no properties to edit.');
+  if (element.meta?.editable === false || pseudoKinds.has(element.kind)) throw new Error('This symbol has no properties to edit.');
   if (element.implicit) throw new Error('This element is only named in a relationship. Declare it in the source to give it properties.');
   const lines = source.split(/\r?\n/), code = codeLines(source);
   const raw = lines[element.startLine], text = code[element.startLine];

@@ -2,6 +2,7 @@ import type { DiagramBlock, DiagramEdit, DiagramElement } from '../shared/protoc
 import { parseDocument } from './parser';
 import { codeLines, parseDeclaration, parseRelation, reference, unquote } from './syntax';
 import { familyFor } from './families/registry';
+import { pseudoKinds } from './kinds';
 import type { EditOptions } from './edits';
 
 type Apply = (source: string, diagramId: string, edit: DiagramEdit, options: EditOptions) => string;
@@ -9,7 +10,6 @@ type ConnectedElement = Extract<DiagramEdit, { type: 'addConnectedElement' }>;
 type Reconnect = Extract<DiagramEdit, { type: 'reconnectRelation' }>;
 
 const structureKinds = new Set(['activity', 'sdl', 'mindmap', 'wbs']);
-const pseudoKinds = new Set(['start', 'end']);
 
 function parsedBlock(source: string, diagramId: string, options: EditOptions): DiagramBlock | undefined {
   return parseDocument(source, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);

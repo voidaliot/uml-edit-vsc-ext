@@ -2,8 +2,16 @@ import { useEffect, useRef } from 'react';
 import { Panel, ViewportPortal, useInternalNode, type NodeChange } from '@xyflow/react';
 import type { DiagramBlock, Point } from '../shared/protocol';
 import { containerTargets } from '../core/containment';
+import { applyDiagramEdit } from '../core/edits';
 import { dropContainer, freeSpot, snapBox, type Box, type Guide } from './arrange';
 import type { UmlNode } from './nodes';
+
+/** The containers this element can really be written into: the edit itself decides, so a preview never promises a move that is then refused. */
+function movableInto(source: string, diagram: DiagramBlock, elementId: string) {
+  return containerTargets(source, diagram, elementId)?.filter(target => {
+    try { applyDiagramEdit(source, diagram.id, { type: 'moveToContainer', elementId, parentId: target.id }); return true; } catch { return false; }
+  });
+}
 
 /** Snap distance in screen pixels, so snapping feels the same at every zoom. */
 const snapDistance = 6;
@@ -62,7 +70,7 @@ export interface DragSession {
 }
 
 export function startSession(source: string, diagram: DiagramBlock, nodes: readonly UmlNode[], id: string): DragSession | undefined {
-  const targets = containerTargets(source, diagram, id), node = nodes.find(item => item.id === id);
+  const targets = movableInto(source, diagram, id), node = nodes.find(item => item.id === id);
   if (!targets || !node) return undefined;
   const own = subtree(nodes, id);
   const containers = new Map(nodes.filter(item => item.data.element.meta?.container && !own.has(item.id)).map(item => [item.id, nodeBox(item)]));
@@ -145,7 +153,7 @@ export function DragOverlay({ feedback }: { feedback?: DragFeedback }) {
 /** "Move to…" in an element's context menu: the same membership change as a drag, without the gesture. */
 export function MoveToMenu({ source, diagram, elementId, onMove }: { source: string; diagram: DiagramBlock; elementId: string; onMove: (parentId: string | undefined) => void }) {
   const element = diagram.elements.find(item => item.id === elementId);
-  const targets = containerTargets(source, diagram, elementId)?.filter(target => target.id !== element?.parentId);
+  const targets = movableInto(source, diagram, elementId)?.filter(target => target.id !== element?.parentId);
   if (!element || !targets || !targets.length && !element.parentId) return null;
   return <>
     <div className="context-subheading">Move to…</div>

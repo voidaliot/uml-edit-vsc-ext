@@ -78,15 +78,16 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
     if (nextSource !== source) version++;
     source = nextSource; layoutText = nextLayoutText; positions = nextPositions; revision++;
   }
-  async function change(nextSource, nextLayoutText) {
+  // `linked` marks a placement that completes the source edit before it; the pair travels as one step.
+  async function change(nextSource, nextLayoutText, linked = false) {
     if (nextSource === source && nextLayoutText === layoutText) return;
-    const before = { source, layoutText };
+    const before = { source, layoutText, linked: linked && undo.length > 0 };
     await replace(nextSource, nextLayoutText);
     undo.push(before); redo.length = 0;
   }
-  async function travel(from, to) {
+  async function travel(from, to, linked = false) {
     if (!from.length) return;
-    const current = { source, layoutText }, target = from.at(-1);
+    const current = { source, layoutText, linked }, target = from.at(-1);
     await replace(target.source, target.layoutText);
     from.pop(); to.push(current);
   }
@@ -108,7 +109,7 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
           const layout = mergeLayoutPositions(positions[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends);
           if (layout.viewport) viewports[message.diagramId] = layout.viewport; else delete viewports[message.diagramId];
           const next = { ...positions, [message.diagramId]: layout.bends ? { positions: layout.positions, bends: layout.bends } : { positions: layout.positions } };
-          await change(source, serializeLayoutFile(next) ?? null);
+          await change(source, serializeLayoutFile(next) ?? null, message.linked === true);
           revision++;
           break;
         }
@@ -119,8 +120,8 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
           await change((source.trim() ? source.trimEnd() + eol + eol : '') + starter.replace(/\r?\n/g, eol), layoutText);
           break;
         }
-        case 'undo': await travel(undo, redo); break;
-        case 'redo': await travel(redo, undo); break;
+        case 'undo': { const linked = undo.at(-1)?.linked === true; await travel(undo, redo, linked); if (linked) await travel(undo, redo); break; }
+        case 'redo': await travel(redo, undo); if (redo.at(-1)?.linked) await travel(redo, undo, true); break;
         case 'ready':
         case 'openSource': break;
       }

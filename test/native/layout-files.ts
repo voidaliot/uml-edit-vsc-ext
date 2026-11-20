@@ -96,6 +96,20 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     assert.equal(document.getText(), renamed, 'Bends never touch the PlantUML file.');
     console.log('PASS relationship bends share the placement history');
 
+    // A placement that completes a source edit (a dropped paste, a move into a package) travels with it.
+    first.send({ type: 'edit', version: document.version, diagramId: 'diagram-1', edit: { type: 'rename', elementId: 'B', name: 'Order' } });
+    await eventually(() => document.getText().includes('"Order" as B'), 'The second rename must reach the source.');
+    const edited = document.getText(), dropped = { x: 500, y: 300 };
+    first.send({ type: 'layout', linked: true, version: document.version, diagramId: 'diagram-1', basePositions: { A, B }, layout: { positions: { A, B: dropped } } });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B: dropped }), 'The linked placement must be written.');
+    first.send({ type: 'undo' });
+    await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'One undo must take back a linked placement together with its edit.');
+    first.send({ type: 'redo' });
+    await eventually(async () => document.getText() === edited && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B: dropped }), 'One redo must replay the edit together with its linked placement.');
+    first.send({ type: 'undo' });
+    await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'The pair is undone again for the steps that follow.');
+    console.log('PASS a placement linked to a source edit is undone and redone with it');
+
     // Undo from the text editor or Edit menu reverts the rename only; the move made after it stays next.
     await vscode.commands.executeCommand('undo');
     await eventually(() => document.getText() === source, 'Native undo reverts the source.');

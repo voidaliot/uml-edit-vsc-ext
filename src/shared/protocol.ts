@@ -79,7 +79,7 @@ export type ExportFormat = 'svg' | 'png';
 export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit; /** The family shown for a block whose source does not settle it. */ kind?: DiagramKind }
-  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point>; /** Present only when the message changes bends; they are merged like positions. */ baseBends?: Record<string, Point[]> }
+  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point>; /** Present only when the message changes bends; they are merged like positions. */ baseBends?: Record<string, Point[]>; /** Completes the source edit made just before it: the two are undone and redone as one step. */ linked?: boolean }
   | { type: 'create'; kind: DiagramKind; /** Start without the sample content. */ blank?: boolean }
   | { type: 'openSource'; line?: number }
   | { type: 'undo' }

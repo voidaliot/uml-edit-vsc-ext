@@ -104,7 +104,7 @@ Commit the layout file to share your arrangement, or ignore it and let everyone 
 | Re-attach a relationship | Select it and drag an end grip to another element |
 | Bend a relationship | Select it, drag the middle grip; double-click a bend to remove it |
 | Move into or out of a package | Drop the element on a package, drag it clear of its package, or **Move to…** in the context menu |
-| Place without snapping | Hold **Alt** while dragging |
+| Place without snapping | Hold **Alt** while dragging, or switch **Snap while dragging** off in the toolbar |
 | Find an element | **Ctrl+F** / **Cmd+F** |
 | Export SVG or PNG | **Export image** in the toolbar |
 | Show all shortcuts | **?** |

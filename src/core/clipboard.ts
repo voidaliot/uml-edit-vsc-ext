@@ -3,6 +3,7 @@ import { parseDocument } from './parser';
 import { codeLines, parseDeclaration, parseMemberStatement, parseRelation, quote, reference, type TokenSpan } from './syntax';
 import { familyFor } from './families/registry';
 import { getTemplate } from './templates';
+import { declarationKinds, pseudoKinds } from './kinds';
 
 /** Source-derived copy of a selection, held by the editor and pasted back as text. */
 export interface ClipFragment {
@@ -13,9 +14,6 @@ export interface ClipFragment {
   origins: Record<number, string>;
 }
 
-/** The families whose statements are self-contained declarations and relationships. */
-const copyableKinds = new Set<DiagramKind>(['class', 'object', 'usecase', 'component', 'deployment', 'state', 'entity']);
-const pseudoKinds = new Set(['start', 'end']);
 const notePattern = /^(\s*[hr]?note\s+(?:left|right|top|bottom)\s+(?:of\s+)?)([^:]+?)(\s*(?::.*)?)$/i;
 const noteAlias = /^(\s*[hr]?note\s+as\s+)(\S+)/i;
 const label = (kind: DiagramKind) => (getTemplate(kind)?.label ?? kind).toLowerCase();
@@ -25,7 +23,7 @@ export function declarationBlocker(block: DiagramBlock, action: string): string 
   if (!block.graphical) return 'This diagram has syntax the canvas cannot edit. Use the source editor.';
   if (block.kind === 'sequence') return `${action} is not available in sequence diagrams, where messages depend on their order. Use the source editor.`;
   if (['activity', 'sdl', 'mindmap', 'wbs'].includes(block.kind) || block.meta?.legacy) return `${action} is not available here: this diagram is defined by the order of its source. Use the source editor.`;
-  if (familyFor(block.kind) || !copyableKinds.has(block.kind)) return `${action} is not available in ${label(block.kind)} diagrams. Use the source editor.`;
+  if (familyFor(block.kind) || !declarationKinds.has(block.kind)) return `${action} is not available in ${label(block.kind)} diagrams. Use the source editor.`;
   if (block.elements.some(element => element.meta?.procedure)) return `${action} is not available in a diagram that uses local procedures. Use the source editor.`;
 }
 
@@ -113,7 +111,7 @@ export function pasteLines(block: DiagramBlock, fragment: Pick<ClipFragment, 'ki
   // Alone, a few elements may read as another of the families that share this syntax (a lone
   // `[Web]` as a component diagram); the family is settled by the diagram they are pasted into.
   const snippet = parseDocument(`@startuml\n${fragment.source}\n@enduml`, { kinds: { 'diagram-1': block.kind } }).diagrams[0];
-  if (!snippet?.graphical || !copyableKinds.has(snippet.kind)) throw new Error(`The copied text is not a ${label(block.kind)} diagram the canvas can edit.`);
+  if (!snippet?.graphical || !declarationKinds.has(snippet.kind)) throw new Error(`The copied text is not a ${label(block.kind)} diagram the canvas can edit.`);
   const raw = fragment.source.split('\n'), code = codeLines(fragment.source);
   // Snippet document line n is fragment line n - 1.
   const skip = new Set<number>();

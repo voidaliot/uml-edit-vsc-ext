@@ -98,15 +98,16 @@ test('dragging an element clear of its package takes it out, and dropping it on 
   await expect.poll(() => source(page)).toContain('package Billing {\n  class Invoice\n  class Line\n}');
   const inside = await box(page, 'Line'), grown = await box(page, 'Billing');
   expect(inside.x).toBeGreaterThanOrEqual(grown.x); expect(inside.y + inside.height).toBeLessThanOrEqual(grown.y + grown.height);
-  // Each move is two steps: the placement on the edited source, then the edit itself.
-  await page.keyboard.press('Control+z');
-  await expect.poll(async () => (await box(page, 'Line')).x).toBeCloseTo(dropped.x, 0);
-  expect(await source(page)).toContain('  class Line\n}');
+  // Each move is one step: the edit and the place the element was dropped at go back together.
   await page.keyboard.press('Control+z');
   await expect.poll(() => source(page)).toContain("@startuml\nclass Line\n' Ordering model");
-  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await box(page, 'Line')).x).toBeCloseTo(dropped.x, 0);
   await page.keyboard.press('Control+z');
   await expect.poll(() => source(page)).toBe(model.trimEnd());
+  // Redo brings back the move and its place as one step too.
+  await page.keyboard.press('Control+Shift+z');
+  await expect.poll(() => source(page)).toContain("@startuml\nclass Line\n' Ordering model");
+  await expect.poll(async () => (await box(page, 'Line')).x).toBeCloseTo(dropped.x, 0);
   expect(errors).toEqual([]);
 });
 

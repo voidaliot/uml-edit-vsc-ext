@@ -1,6 +1,6 @@
 import type { ClipFragment } from '../core/clipboard';
 import type { DiagramElement, ElementPlacement, Point } from '../shared/protocol';
-import type { Box } from './arrange';
+import { overlaps, type Box } from './arrange';
 
 /** What the canvas holds after a copy: the source fragment and where its elements were drawn. */
 export interface Clip {
@@ -29,7 +29,6 @@ export function captureClip(fragment: ClipFragment, nodes: readonly DrawnNode[],
   return { fragment, boxes, placed };
 }
 
-const overlaps = (a: Box, b: Box, margin: number) => a.x < b.x + b.width + margin && b.x < a.x + a.width + margin && a.y < b.y + b.height + margin && b.y < a.y + a.height + margin;
 
 /**
  * How far to move a copied group so that none of its boxes touches what is already drawn. The group

@@ -53,7 +53,7 @@ export function QuickConnect({ draft, sourceName, onChange, onSubmit, onCancel }
   }, [onCancel]);
   if (!draft.kind) return <div className="context-menu quick-connect nowheel" role="menu" aria-label="Add connected element" style={{ left: Math.max(8, draft.x), top: Math.max(8, draft.y) }}>
     <div className="context-heading">CONNECT {sourceName.toUpperCase()} TO A NEW…</div>
-    {draft.kinds.map((kind, index) => <button role="menuitem" key={kind} autoFocus={index === 0} onClick={() => onChange({ ...draft, kind })}><Plus size={13} /> {kind}</button>)}
+    {draft.kinds.map((kind, index) => <button role="menuitem" key={kind} autoFocus={index === 0} onClick={() => onChange({ ...draft, kind })}><Plus size={13} /> {kind.replace(/^sdl-/, '')}</button>)}
     <div className="menu-divider" />
     <button role="menuitem" onClick={onCancel}>Cancel <kbd>Esc</kbd></button>
   </div>;

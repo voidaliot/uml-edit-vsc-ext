@@ -53,7 +53,7 @@ export function validWebviewMessage(value: unknown): value is WebviewMessage {
     case 'redo': return true;
     case 'openSource': return value.line === undefined || (version(value.line) && value.line <= 1e7);
     case 'edit': return version(value.version) && id(value.diagramId) && validEdit(value.edit) && (value.kind === undefined || text(value.kind, 100));
-    case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions })) && (value.baseBends === undefined || validBends(value.baseBends));
+    case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions })) && (value.baseBends === undefined || validBends(value.baseBends)) && (value.linked === undefined || typeof value.linked === 'boolean');
     case 'create': return text(value.kind, 100) && (value.blank === undefined || typeof value.blank === 'boolean');
     case 'export': return validExport(value);
     default: return false;

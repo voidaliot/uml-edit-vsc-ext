@@ -14,6 +14,7 @@ export const shortcuts: readonly Shortcut[] = [
   { keys: ['Delete', 'Backspace'], action: 'Delete selection' },
   { keys: ['F2'], action: 'Rename element or edit relationship' },
   { keys: ['Arrow keys'], action: 'Move selected elements' },
+  { keys: ['Alt+Drag'], action: 'Place without snapping' },
   { keys: ['Mod+Z'], action: 'Undo' },
   { keys: ['Mod+Shift+Z', 'Mod+Y'], action: 'Redo' },
   { keys: ['Mod+F'], action: 'Find an element in the outline' },

@@ -18,10 +18,10 @@ declare global {
 const vscode = window.acquireVsCodeApi?.();
 export const isStandalone = !vscode;
 /** Per-editor view choices that are not part of the document, such as the family of a blank diagram. */
-export interface ViewState { kinds?: Record<string, DiagramKind> }
+export interface ViewState { kinds?: Record<string, DiagramKind>; /** False once snapping was switched off in the toolbar. */ snap?: boolean }
 let viewState: ViewState = (vscode?.getState() as ViewState | undefined) ?? {};
 export const loadViewState = (): ViewState => viewState;
-export function saveViewState(state: ViewState): void { viewState = state; vscode?.setState(state); }
+export function saveViewState(state: ViewState): void { viewState = { ...viewState, ...state }; vscode?.setState(viewState); }
 export let isFilePreview = !vscode && window.__ALIOT_PREVIEW_MODEL__ === true;
 export type BridgeMessage = HostMessage | { type: 'connection'; connected: boolean } | { type: 'documentOpened' };
 const listeners = new Set<(message: BridgeMessage) => void>();
@@ -52,11 +52,11 @@ const acceptPreviewMessage = (message: HostMessage) => {
 let source = window.__ALIOT_INITIAL_SOURCE__ ?? '@startuml\ntitle Order management\nclass "Order" as Order {\n  + id: UUID\n  + status: OrderStatus\n  + submit()\n}\nclass "Line item" as LineItem {\n  + quantity: int\n  + unitPrice: Money\n}\nclass "Customer" as Customer {\n  + name: String\n  + email: String\n}\nOrder *-- LineItem : contains\nCustomer --> Order : places\n@enduml\n';
 let version = 1;
 let layouts: Layouts = {};
-interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; kind: 'source' | 'document' | 'layout' }
+interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; kind: 'source' | 'document' | 'layout'; /** A placement that completes the source edit before it; the pair is one step. */ linked?: boolean }
 const undo: HistorySnapshot[] = [];
 const redo: HistorySnapshot[] = [];
 const documentMessage = (): HostMessage => ({ type: 'document', source, version, layouts, trusted: true, fileName });
-const historySnapshot = (kind: HistorySnapshot['kind'] = 'source'): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, kind });
+const historySnapshot = (kind: HistorySnapshot['kind'] = 'source', linked = false): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, kind, linked });
 function restoreHistory(snapshot: HistorySnapshot) {
   if (snapshot.kind !== 'layout' || source !== snapshot.source) version++;
   source = snapshot.source; layouts = snapshot.layouts; fileName = snapshot.fileName;
@@ -72,9 +72,13 @@ export function downloadSource(): void {
 
 function downloadText(content: string) {
   const name = fileName.replace(/^.*[\\/]/, '') || 'diagram.puml';
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  downloadBlob(/\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`, new Blob([content], { type: 'text/plain;charset=utf-8' }));
+}
+
+function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url; link.download = /\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`; link.style.display = 'none';
+  link.href = url; link.download = name; link.style.display = 'none';
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -82,11 +86,7 @@ function downloadText(content: string) {
 /** VS Code asks where to save an exported image; the browser previews download it like any file. */
 export async function saveExport(name: string, format: ExportFormat, content: string | Blob): Promise<void> {
   if (vscode) { vscode.postMessage({ type: 'export', format, name, data: typeof content === 'string' ? content : await toBase64(content) }); return; }
-  const url = URL.createObjectURL(typeof content === 'string' ? new Blob([content], { type: 'image/svg+xml' }) : content);
-  const link = document.createElement('a');
-  link.href = url; link.download = name; link.style.display = 'none';
-  document.body.append(link); link.click(); link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(name, typeof content === 'string' ? new Blob([content], { type: 'image/svg+xml' }) : content);
 }
 
 /** Browser preview only: open a local PlantUML file as an independent document. */
@@ -189,7 +189,7 @@ export function send(message: WebviewMessage): void {
           if (message.version !== undefined && message.version !== version) throw new Error('The document changed before the layout could be saved.');
           const next = mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends);
           const placement = (layout?: Layouts[string]) => JSON.stringify([layout?.positions ?? {}, layout?.bends ?? {}]);
-          if (placement(layouts[message.diagramId]) !== placement(next)) { undo.push(historySnapshot('layout')); redo.length = 0; }
+          if (placement(layouts[message.diagramId]) !== placement(next)) { undo.push(historySnapshot('layout', message.linked === true && undo.length > 0)); redo.length = 0; }
           layouts = { ...layouts, [message.diagramId]: next }; break;
         }
         case 'create': {
@@ -199,8 +199,19 @@ export function send(message: WebviewMessage): void {
           source = starter; version++; layouts = {}; fileName = `${message.kind}.puml`;
           emit(documentMessage()); break;
         }
-        case 'undo': if (undo.length) { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;
-        case 'redo': if (redo.length) { const snapshot = redo.pop()!; undo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;
+        case 'undo': {
+          const step = (linked: boolean) => { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
+          const linked = undo.at(-1)?.linked === true;
+          if (undo.length) step(linked);
+          if (linked && undo.length) step(false);
+          break;
+        }
+        case 'redo': {
+          const step = (linked: boolean) => { const snapshot = redo.pop()!; undo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
+          if (redo.length) step(false);
+          if (redo.at(-1)?.linked) step(true);
+          break;
+        }
         case 'openSource': break;
       }
     } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }

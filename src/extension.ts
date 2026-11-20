@@ -25,7 +25,7 @@ type Viewport = DiagramLayout['viewport'];
 type Placement = Pick<DiagramLayout, 'positions' | 'bends'>;
 
 /** One placement change. It is undone only while the source still reads as it did when the change was made. */
-interface LayoutStep { diagramId: string; before?: Placement; after?: Placement; sourceText: string }
+interface LayoutStep { diagramId: string; before?: Placement; after?: Placement; sourceText: string; /** Completes the source edit made just before it; the two are undone and redone together. */ linked?: boolean }
 
 interface LayoutState {
   /** The companion layout file; undefined for untitled documents, whose placement stays in memory. */
@@ -219,7 +219,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
           if (layout.viewport) state.viewports[id] = { ...layout.viewport }; else delete state.viewports[id];
           this.scheduleViewports(document.uri, state);
           if (!samePlacement(current, layout)) {
-            const step: LayoutStep = { diagramId: id, before: state.positions[id], after: copyPlacement(layout), sourceText: document.getText() };
+            const step: LayoutStep = { diagramId: id, before: state.positions[id], after: copyPlacement(layout), sourceText: document.getText(), ...(message.linked ? { linked: true } : {}) };
             const positions = withPlacement(state.positions, id, step.after);
             await this.writeLayoutFile(state, positions);
             state.positions = positions;
@@ -262,17 +262,30 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     await this.enqueueEdit(document, async () => {
       const stack = direction === 'undo' ? state.undo : state.redo;
       const step = stack.at(-1);
-      if (step && step.sourceText === document.getText()) { await this.applyStep(document, state, direction); return; }
+      const native = async (): Promise<boolean> => {
+        if (!session.panel.active) return false;
+        const version = document.version;
+        state.nativeHistory++;
+        try {
+          await vscode.commands.executeCommand(direction);
+          const deadline = Date.now() + 250;
+          while (document.version === version && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+        } finally { state.nativeHistory--; }
+        return document.version !== version;
+      };
+      if (step && step.sourceText === document.getText()) {
+        await this.applyStep(document, state, direction);
+        // A placement that completed a source edit goes back together with that edit.
+        if (direction === 'undo' && step.linked) await native();
+        return;
+      }
       if (!session.panel.active) return;
-      const version = document.version;
-      state.nativeHistory++;
-      try {
-        await vscode.commands.executeCommand(direction);
-        const deadline = Date.now() + 250;
-        while (document.version === version && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-      } finally { state.nativeHistory--; }
+      const changed = await native();
       // The native stack had nothing left: the placement step is the next one after all.
-      if (document.version === version && step) await this.applyStep(document, state, direction);
+      if (!changed && step) await this.applyStep(document, state, direction);
+      // Redoing a source edit also redoes the placement that completed it.
+      const next = state.redo.at(-1);
+      if (changed && direction === 'redo' && next?.linked && next.sourceText === document.getText()) await this.applyStep(document, state, direction);
     });
   }
 

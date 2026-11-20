@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ReactFlow, Background, BackgroundVariant, MiniMap, applyNodeChanges, applyEdgeChanges, ConnectionMode, SelectionMode, useReactFlow, useNodesInitialized, type NodeTypes, type EdgeTypes, type Connection, type Viewport, type NodeChange } from '@xyflow/react';
 import type { FinalConnectionState } from '@xyflow/react';
-import { ClipboardPaste, Copy, CopyPlus, Keyboard, Scissors, SlidersHorizontal, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
+import { Magnet, ClipboardPaste, Copy, CopyPlus, Keyboard, Scissors, SlidersHorizontal, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
 import { parseDocument, umlFamilies } from '../core/parser';
 import { applyDiagramEdit } from '../core/edits';
 import { layoutDiagram } from '../core/layout';
@@ -89,6 +89,8 @@ export function App() {
   const followPlacement = useRef<{ diagramId: string; source: string; positions: Record<string, Point> } | undefined>(undefined);
   const [dragFeedback, setDragFeedback] = useState<DragFeedback>();
   const pointer = usePointer();
+  // Alt also skips snapping for one drag, but on Windows and Linux a lone Alt can reach the menu bar; the toolbar switch always works.
+  const [snap, setSnap] = useState(() => loadViewState().snap !== false);
   const pendingPlacement = useRef<{ diagramId: string; knownIds: Set<string>; point?: Point } | undefined>(undefined);
   const reveal = useRef<string | undefined>(undefined);
   const reconnecting = useRef<{ id: string; end: 'source' | 'target' } | undefined>(undefined);
@@ -184,7 +186,7 @@ export function App() {
             previousPoints[replacement.id] = point;
             positions.current[id] = previousPoints;
             setNodes(previous => previous.map(node => node.type === 'uml' && node.data.diagramId === id && node.id === replacement.id ? { ...node, position: point } : node));
-            send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: id, layout: { ...current.layouts[id], positions: previousPoints } });
+            send({ type: 'layout', linked: true, version: docRef.current?.version, basePositions, diagramId: id, layout: { ...current.layouts[id], positions: previousPoints } });
           }
         }
       }
@@ -218,7 +220,7 @@ export function App() {
     if (!stale.length) return;
     const next = Object.fromEntries(Object.entries(kept).filter(([key]) => !stale.includes(key))), placed = { ...positions.current[id] ?? docRef.current?.layouts[id]?.positions ?? {} };
     setBends(previous => ({ ...previous, [id]: next }));
-    send({ type: 'layout', version: docRef.current?.version, basePositions: placed, baseBends: kept, diagramId: id, layout: { positions: placed, bends: next } });
+    send({ type: 'layout', linked: true, version: docRef.current?.version, basePositions: placed, baseBends: kept, diagramId: id, layout: { positions: placed, bends: next } });
   }, []);
 
   const moveMessage = useCallback((relation: DiagramRelation, row: number, version: number, diagramId: string) => commit({ type: 'moveSequenceEvent', eventId: relation.id, row }, version, diagramId), [commit]);
@@ -261,7 +263,7 @@ export function App() {
       const point = pending.point ?? (arranged && !added.meta?.container ? spot(added, { ...automatic, ...saved }) : undefined);
       if (movable && point) saved[added.id] = point;
       pendingPlacement.current = undefined; reveal.current = added.id;
-      if (movable && point) send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
+      if (movable && point) send({ type: 'layout', linked: true, version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
     }
     const paste = pendingPaste.current;
     const copies = paste?.diagramId === diagram.id ? diagram.elements.filter(element => !paste.knownIds.has(element.id)) : [];
@@ -271,7 +273,7 @@ export function App() {
       const placed = copies.filter(element => Object.hasOwn(paste.points, element.startLine - paste.insertLine) && !element.meta?.positionLocked && !element.meta?.moveEdit);
       for (const element of placed) saved[element.id] = paste.points[element.startLine - paste.insertLine];
       pendingPaste.current = undefined; pastedIds.current = copies.filter(element => element.meta?.editable !== false).map(element => element.id);
-      if (placed.length) send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
+      if (placed.length) send({ type: 'layout', linked: true, version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
     }
     const follow = followPlacement.current;
     if (follow?.diagramId === diagram.id && follow.source === documentState.source) {
@@ -279,7 +281,7 @@ export function App() {
       followPlacement.current = undefined;
       const basePositions = { ...saved };
       for (const [id, point] of Object.entries(follow.positions)) saved[id] = { ...saved[id], ...point };
-      send({ type: 'layout', version: documentState.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
+      send({ type: 'layout', linked: true, version: documentState.version, basePositions, diagramId: diagram.id, layout: { ...documentState.layouts[diagram.id], positions: saved } });
     }
     positions.current[diagram.id] = saved;
     const display: Record<string, Point> = Object.create(null);
@@ -661,6 +663,9 @@ export function App() {
     if (!diagram || !key) return;
     const baseBends = bends[diagram.id] ?? {}, next = { ...baseBends };
     if (points.length) next[key] = points; else delete next[key];
+    // Bends left behind by relationships that are gone would come back with the next relationship between the same two elements.
+    const live = new Set(bendKeys.values());
+    for (const stale of Object.keys(next)) if (!live.has(stale)) delete next[stale];
     setBends(previous => ({ ...previous, [diagram.id]: next }));
     const basePositions = { ...positions.current[diagram.id] ?? docRef.current?.layouts[diagram.id]?.positions ?? {} }, placed = { ...basePositions };
     // Bends are absolute points: both ends are pinned where they are shown, or the next automatic
@@ -791,7 +796,7 @@ export function App() {
     }
     // Snapping and container previews follow a pointer drag, including the release that ends it; Alt places freely.
     const session = dragSession.current, dragging = Boolean(dragStart.current) && changes.some(change => change.type === 'position' && change.position);
-    const snapped = dragging && freeform && !pointer.current.alt ? snapDrag(changes, nodes, flow.getViewport().zoom, session?.touched) : undefined;
+    const snapped = dragging && freeform && snap && !pointer.current.alt ? snapDrag(changes, nodes, flow.getViewport().zoom, session?.touched) : undefined;
     if (snapped) changes = snapped.changes;
     const lead = session && changes.find(change => change.type === 'position' && change.id === session.id && change.position);
     const leader = lead && nodes.find(node => node.id === session.id);
@@ -854,6 +859,7 @@ export function App() {
       <div className="toolbar-group">
         <ToolButton title="Select tool (V): wheel pans, Ctrl+wheel zooms" onClick={() => setTool('select')} active={!hand}><MousePointer2 size={16} /></ToolButton>
         <ToolButton title="Hand tool (H): drag to pan, wheel zooms. Hold Space temporarily." onClick={() => setTool('hand')} active={hand}><Hand size={16} /></ToolButton>
+        <ToolButton title="Snap to other elements while dragging (hold Alt to skip once)" label="Snap while dragging" onClick={() => { setSnap(!snap); saveViewState({ snap: !snap }); }} active={snap} disabled={!freeform}><Magnet size={16} /></ToolButton>
         <ToolButton title="Re-layout diagram after changes; reset manual placements" label="Re-layout diagram" onClick={autoLayout} disabled={!native || applyingEdit}><RefreshCw size={16} /></ToolButton>
       </div>
       <span className="toolbar-divider" />

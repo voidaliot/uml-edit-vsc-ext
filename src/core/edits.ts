@@ -213,7 +213,22 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
   }
   if (edit.type === 'properties') return stillEditable(setProperties(source, block, edit.elementId, edit), 'Changing these properties');
   // Membership is where a declaration is written; the move refuses every family where it is not.
-  if (edit.type === 'moveToContainer') return stillEditable(moveToContainer(source, block, edit.elementId, edit.parentId), 'Moving this element');
+  if (edit.type === 'moveToContainer') {
+    const result = stillEditable(moveToContainer(source, block, edit.elementId, edit.parentId), 'Moving this element');
+    // PlantUML creates an element where it is first mentioned. A declaration that lands below a
+    // relationship or member line naming it would be drawn here in its new container, but by
+    // PlantUML where that earlier line stands.
+    const mentionedFirst = (text: string) => {
+      const next = parseDocument(text, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId)!, nextCode = codeLines(text);
+      const first = new Map<string, number>(), note = (id: string, line: number) => { if (!first.has(id) || line < first.get(id)!) first.set(id, line); };
+      for (const relation of next.relations) { note(relation.source, relation.startLine); note(relation.target, relation.startLine); }
+      for (let line = next.startLine + 1; line < next.endLine; line++) { const owner = parseMemberStatement(nextCode[line])?.owner; if (owner && !next.relations.some(relation => relation.startLine === line)) note(owner, line); }
+      return new Set(next.elements.filter(element => !element.implicit && first.has(element.id) && first.get(element.id)! < element.startLine).map(element => element.id));
+    };
+    const before = mentionedFirst(source), late = [...mentionedFirst(result)].find(id => !before.has(id));
+    if (late !== undefined) throw new Error(`"${block.elements.find(element => element.id === late)?.name ?? late}" is named by a line above the place it would move to, and PlantUML would keep it there. Move that line below, or make this change in the source editor.`);
+    return result;
+  }
 
   if (block.meta?.legacy) {
     const result = editLegacyActivity(source, block, edit);

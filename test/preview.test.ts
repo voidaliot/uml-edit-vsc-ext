@@ -123,6 +123,27 @@ describe('live PlantUML file with a layout file', () => {
     expect(parseLayoutFile(await readFile(layoutPath, 'utf8'))['diagram-1'].positions).toEqual(positions);
   });
 
+  it('undoes and redoes a placement together with the source edit it completes', async () => {
+    const { model } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
+    const before = await model.snapshot();
+    const edited = await model.receive({ type: 'edit', version: before.version, diagramId: 'diagram-1', edit: { type: 'addElement', kind: 'class', name: 'Dropped' } });
+    const placed = { ...positions, Dropped: { x: 500, y: 300 } };
+    const linked = await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: positions, layout: { positions: placed } });
+    expect(linked.layouts['diagram-1'].positions).toEqual(placed);
+    // One step back removes the element and its place; one step forward restores both.
+    const undone = await model.receive({ type: 'undo' });
+    expect(undone.source).toBe(before.source);
+    expect(undone.layouts['diagram-1'].positions).toEqual(positions);
+    const redone = await model.receive({ type: 'redo' });
+    expect(redone.source).toBe(edited.source);
+    expect(redone.layouts['diagram-1'].positions).toEqual(placed);
+    // An ordinary move after it is still a step of its own.
+    await model.receive({ type: 'layout', version: redone.version, diagramId: 'diagram-1', basePositions: placed, layout: { positions: { ...placed, A: { x: 1, y: 1 } } } });
+    const stepped = await model.receive({ type: 'undo' });
+    expect(stepped.source).toBe(edited.source);
+    expect(stepped.layouts['diagram-1'].positions).toEqual(placed);
+  });
+
   it('keeps relationship bends with the placements, in the same history, until Re-layout clears both', async () => {
     const { model, layoutPath } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
     const key = bendKey('A', 'B', 0), bends = { [key]: [{ x: 10, y: 20 }] };
