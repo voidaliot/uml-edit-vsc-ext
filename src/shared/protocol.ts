@@ -62,7 +62,12 @@ export type DiagramEdit =
   /** Re-attach one end of a relationship; only that endpoint's source token changes. */
   | { type: 'reconnectRelation'; relationId: string; end: 'source' | 'target'; elementId: string };
 
-export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
+export interface DiagramLayout {
+  positions: Record<string, ElementPlacement>;
+  viewport?: { x: number; y: number; zoom: number };
+  /** Manual bend points of relationships, keyed by `relationBendKeys` (absent when there are none). */
+  bends?: Record<string, Point[]>;
+}
 export type Layouts = Record<string, DiagramLayout>;
 export type HostMessage =
   | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number; /** Families chosen for blank diagrams, per diagram id. */ kinds?: Record<string, DiagramKind> }
@@ -74,7 +79,7 @@ export type ExportFormat = 'svg' | 'png';
 export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit; /** The family shown for a block whose source does not settle it. */ kind?: DiagramKind }
-  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point> }
+  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point>; /** Present only when the message changes bends; they are merged like positions. */ baseBends?: Record<string, Point[]> }
   | { type: 'create'; kind: DiagramKind; /** Start without the sample content. */ blank?: boolean }
   | { type: 'openSource'; line?: number }
   | { type: 'undo' }

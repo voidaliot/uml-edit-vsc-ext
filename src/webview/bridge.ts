@@ -42,7 +42,7 @@ const acceptPreviewMessage = (message: HostMessage) => {
     source = message.source; version = message.version; fileName = message.fileName;
     layouts = { ...message.layouts };
     for (const pending of pendingLayouts) if (pending.version === undefined || pending.version === message.version) {
-      layouts[pending.diagramId] = mergeLayoutPositions(layouts[pending.diagramId] ?? { positions: {} }, pending.layout, pending.basePositions);
+      layouts[pending.diagramId] = mergeLayoutPositions(layouts[pending.diagramId] ?? { positions: {} }, pending.layout, pending.basePositions, pending.baseBends);
     }
     emit({ ...message, layouts });
     return;
@@ -131,7 +131,7 @@ export function send(message: WebviewMessage): void {
   if (isFilePreview) {
     const epoch = connectionEpoch;
     if (message.type === 'layout') {
-      layouts = { ...layouts, [message.diagramId]: mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions) };
+      layouts = { ...layouts, [message.diagramId]: mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends) };
       pendingLayouts.add(message);
     }
     if (message.type === 'ready' && !eventStream) {
@@ -187,8 +187,9 @@ export function send(message: WebviewMessage): void {
         }
         case 'layout': {
           if (message.version !== undefined && message.version !== version) throw new Error('The document changed before the layout could be saved.');
-          const next = mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions);
-          if (JSON.stringify(layouts[message.diagramId]?.positions ?? {}) !== JSON.stringify(next.positions)) { undo.push(historySnapshot('layout')); redo.length = 0; }
+          const next = mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends);
+          const placement = (layout?: Layouts[string]) => JSON.stringify([layout?.positions ?? {}, layout?.bends ?? {}]);
+          if (placement(layouts[message.diagramId]) !== placement(next)) { undo.push(historySnapshot('layout')); redo.length = 0; }
           layouts = { ...layouts, [message.diagramId]: next }; break;
         }
         case 'create': {

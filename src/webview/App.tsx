@@ -20,7 +20,8 @@ import { PropertiesForm, ShortcutsPopover, paletteLabel } from './panels';
 import { keyLabel } from './shortcuts';
 import { DragOverlay, MoveToMenu, dropFeedback, followDrag, groupPlacements, menuPlacement, nodeBox, snapDrag, startSession, usePointer, type DragFeedback, type DragSession } from './dragAssist';
 import { QuickConnect, connectableKinds, connectionDrop, type QuickAdd } from './QuickConnect';
-import { canReconnect } from './connections';
+import { canReconnect, interactiveEdges } from './connections';
+import { relationBendKeys } from '../core/layout-file';
 import { reconnectRadius } from './edges';
 
 type FlowNode = UmlNode;
@@ -63,6 +64,8 @@ export function App() {
   const [elementDraft, setElementDraft] = useState<ElementDraft>();
   const [relationDraft, setRelationDraft] = useState<RelationDraft>();
   const [quickAdd, setQuickAdd] = useState<QuickAdd>();
+  /** Hand-placed relationship bends per diagram, as the layout last read or as this panel just shaped them. */
+  const [bends, setBends] = useState<Record<string, Record<string, Point[]>>>({});
   const [selectedId, setSelectedId] = useState<string>();
   const [kinds, setKinds] = useState<Record<string, DiagramKind>>(() => loadViewState().kinds ?? {});
   const [blankStart, setBlankStart] = useState(false);
@@ -123,6 +126,7 @@ export function App() {
     const unsubscribe = subscribe(message => {
       if (message.type === 'document') {
         positions.current = Object.fromEntries(Object.entries(message.layouts).map(([id, layout]) => [id, Object.assign(Object.create(null), layout.positions)]));
+        setBends(Object.fromEntries(Object.entries(message.layouts).flatMap(([id, layout]) => layout.bends ? [[id, layout.bends]] : [])));
         docRef.current = message;
         if (message.kinds) setKinds(previous => { const next = { ...message.kinds, ...previous }; saveViewState({ kinds: next }); return next; });
         setDocumentState(message); setBusy(null);
@@ -624,7 +628,19 @@ export function App() {
   const cancelQuickAdd = useCallback(() => setQuickAdd(undefined), []);
   // Only a selected relationship shows its end grips, so a drag near an unselected end still starts a new connection.
   const relinkable = Boolean(diagram && native && !hand && !derivedRelations && canReconnect(diagram));
-  const linkedEdges = useMemo(() => relinkable ? edges.map(edge => edge.selected && edge.data ? { ...edge, reconnectable: true, data: { ...edge.data, reconnectable: true } } : edge) : edges, [edges, relinkable]);
+  // Bends are layout, like positions: shaped by hand in the free-form graph families, kept in the layout file.
+  const bendable = Boolean(diagram && native && !hand && freeformKinds.has(diagram.kind));
+  const bendKeys = useMemo(() => relationBendKeys(diagram?.relations ?? []), [diagram]);
+  const changeBends = useCallback((relationId: string, points: Point[]) => {
+    const key = bendKeys.get(relationId);
+    if (!diagram || !key) return;
+    const baseBends = bends[diagram.id] ?? {}, next = { ...baseBends };
+    if (points.length) next[key] = points; else delete next[key];
+    setBends(previous => ({ ...previous, [diagram.id]: next }));
+    const placed = { ...positions.current[diagram.id] ?? docRef.current?.layouts[diagram.id]?.positions ?? {} };
+    send({ type: 'layout', version: docRef.current?.version, basePositions: placed, baseBends, diagramId: diagram.id, layout: { positions: placed, viewport: flow.getViewport(), bends: next } });
+  }, [diagram, bendKeys, bends, flow]);
+  const linkedEdges = useMemo(() => interactiveEdges(edges, nodes, { relinkable, bendable, bends: diagram ? bends[diagram.id] ?? {} : {}, keys: bendKeys, onBends: changeBends }), [edges, nodes, relinkable, bendable, bends, bendKeys, diagram, changeBends]);
   const reconnect = (edge: UmlEdge, connection: Connection) => {
     const moving = reconnecting.current;
     if (!moving || moving.id !== edge.id || !edge.data) return;
@@ -644,7 +660,8 @@ export function App() {
     // Containers that were fitted around dragged contents return to their laid-out size.
     setNodes(previous => previous.map(node => ({ ...node, position: fresh[node.id] ?? node.position, data: { ...node.data, element: diagram.elements.find(element => element.id === node.id) ?? node.data.element } })));
     setEdges(previous => previous.map(edge => ({ ...edge, ...relationHandles(edge.data!.relation, diagram, fresh) })));
-    send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { positions: {} } });
+    send({ type: 'layout', version: docRef.current?.version, basePositions, diagramId: diagram.id, layout: { positions: {}, bends: {} }, baseBends: bends[diagram.id] ?? {} });
+    setBends(previous => ({ ...previous, [diagram.id]: {} }));
   };
 
   const selectElement = (element: DiagramElement) => {

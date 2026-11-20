@@ -2,6 +2,8 @@ import type { DiagramBlock, DiagramElement, DiagramRelation, Point } from '../sh
 import { familyFor } from '../core/families/registry';
 import type { ActivityRoute } from './routing';
 import type { Side } from './routing';
+import type { UmlEdge } from './edges';
+import type { UmlNode } from './nodes';
 
 export interface GraphPort { id: string; side: Side; fraction: number }
 
@@ -132,6 +134,45 @@ export function graphPortPosition(element: DiagramElement, port: GraphPort): Poi
   } else if (element.kind === 'database' && horizontal) {
     const arc = Math.sqrt(Math.max(0, 1 - Math.pow(port.fraction * 2 - 1, 2)));
     y = port.side === 'top' ? 12 - 12 * arc : height - 12 + 12 * arc;
+  }
+  return { x, y };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Hand-placed bends leave each element from the side that faces its nearest bend. */
+export function bentHandles(points: Point[], source: Box, target: Box): { sourceHandle: Side; targetHandle: Side } {
+  const facing = (box: Box, point: Point): Side => {
+    const dx = point.x - (box.x + box.width / 2), dy = point.y - (box.y + box.height / 2);
+    return Math.abs(dx) / box.width > Math.abs(dy) / box.height ? dx >= 0 ? 'right' : 'left' : dy >= 0 ? 'bottom' : 'top';
+  };
+  return { sourceHandle: facing(source, points[0]), targetHandle: facing(target, points.at(-1)!) };
+}
+
+/**
+ * The relationships as the canvas offers them for editing: a selected one shows its end grips where it
+ * can be re-attached and its bend grips where it can be shaped; hand-placed bends replace the route.
+ */
+export function interactiveEdges(edges: UmlEdge[], nodes: UmlNode[], options: { relinkable: boolean; bendable: boolean; bends: Record<string, Point[]>; keys: Map<string, string>; onBends: (relationId: string, points: Point[]) => void }): UmlEdge[] {
+  const box = (id: string): Box | undefined => {
+    const node = nodes.find(item => item.id === id);
+    return node && { ...node.position, width: node.measured?.width ?? Number(node.data.element.meta?.width ?? 192), height: node.measured?.height ?? Number(node.data.element.meta?.height ?? 80) };
+  };
+  return edges.map(edge => {
+    const key = options.keys.get(edge.id), points = options.bendable && key && Object.hasOwn(options.bends, key) ? options.bends[key] : undefined;
+    const relink = options.relinkable && !!edge.selected, shape = options.bendable && !!edge.selected;
+    if (!edge.data || !points && !relink && !shape) return edge;
+    const from = box(edge.source), to = box(edge.target);
+    return { ...edge, ...(relink ? { reconnectable: true } : {}), ...(points && from && to ? bentHandles(points, from, to) : {}), data: { ...edge.data, reconnectable: relink, bends: points, onBends: shape ? options.onBends : undefined } };
+  });
+}
+
+/** A bend dragged near the line through a neighbour snaps onto it, so straight runs are easy to make. */
+export function snapBend(point: Point, neighbours: Point[], tolerance: number): Point {
+  let { x, y } = point;
+  for (const other of neighbours) {
+    if (Math.abs(other.x - x) < tolerance) x = other.x;
+    if (Math.abs(other.y - y) < tolerance) y = other.y;
   }
   return { x, y };
 }

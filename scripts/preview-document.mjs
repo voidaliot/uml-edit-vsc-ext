@@ -26,8 +26,8 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
   let queue = Promise.resolve();
   const layouts = () => {
     const result = Object.create(null);
-    for (const [id, layout] of Object.entries(positions)) result[id] = { positions: layout.positions };
-    for (const [id, viewport] of Object.entries(viewports)) result[id] = { positions: result[id]?.positions ?? {}, viewport };
+    for (const [id, layout] of Object.entries(positions)) result[id] = layout.bends ? { positions: layout.positions, bends: layout.bends } : { positions: layout.positions };
+    for (const [id, viewport] of Object.entries(viewports)) result[id] = { positions: {}, ...result[id], viewport };
     return result;
   };
   const snapshot = () => ({ type: 'document', source, version, revision, layouts: layouts(), fileName: basename(path), trusted: true });
@@ -105,9 +105,9 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
           break;
         case 'layout': {
           if (message.version !== undefined) requireDocumentVersion(version, message.version);
-          const layout = mergeLayoutPositions(positions[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions);
+          const layout = mergeLayoutPositions(positions[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends);
           if (layout.viewport) viewports[message.diagramId] = layout.viewport; else delete viewports[message.diagramId];
-          const next = { ...positions, [message.diagramId]: { positions: layout.positions } };
+          const next = { ...positions, [message.diagramId]: layout.bends ? { positions: layout.positions, bends: layout.bends } : { positions: layout.positions } };
           await change(source, serializeLayoutFile(next) ?? null);
           revision++;
           break;
