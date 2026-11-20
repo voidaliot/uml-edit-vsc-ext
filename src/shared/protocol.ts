@@ -58,7 +58,10 @@ export type Layouts = Record<string, DiagramLayout>;
 export type HostMessage =
   | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number; /** Families chosen for blank diagrams, per diagram id. */ kinds?: Record<string, DiagramKind> }
   | { type: 'showSource' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  /** The export commands run in the webview, which alone can draw the diagram. */
+  | { type: 'exportRequest'; format: ExportFormat };
+export type ExportFormat = 'svg' | 'png';
 export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit; /** The family shown for a block whose source does not settle it. */ kind?: DiagramKind }
@@ -66,4 +69,6 @@ export type WebviewMessage =
   | { type: 'create'; kind: DiagramKind; /** Start without the sample content. */ blank?: boolean }
   | { type: 'openSource'; line?: number }
   | { type: 'undo' }
-  | { type: 'redo' };
+  | { type: 'redo' }
+  /** A rendered image to save: SVG markup, or PNG bytes in base64. */
+  | { type: 'export'; format: ExportFormat; name: string; data: string };

@@ -319,3 +319,6 @@ option { background: var(--panel); color: var(--text); }
 .start-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
 .start-mode button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 7px 14px; font: 12px var(--font); cursor: pointer; }
 .start-mode button.active { background: var(--selected); color: var(--selected-text); }
+
+/* Export menu: unchecked choices keep the label column of the checked one. */
+.export-menu .menu-check { width: 13px; flex-shrink: 0; }

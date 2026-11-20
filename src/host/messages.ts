@@ -44,8 +44,21 @@ export function validWebviewMessage(value: unknown): value is WebviewMessage {
     case 'edit': return version(value.version) && id(value.diagramId) && validEdit(value.edit) && (value.kind === undefined || text(value.kind, 100));
     case 'layout': return id(value.diagramId) && !badKey(value.diagramId) && validLayout(value.layout) && (value.version === undefined || version(value.version)) && (value.basePositions === undefined || validLayout({ positions: value.basePositions }));
     case 'create': return text(value.kind, 100) && (value.blank === undefined || typeof value.blank === 'boolean');
+    case 'export': return validExport(value);
     default: return false;
   }
+}
+
+/** Exported images travel as one message; the webview refuses larger ones with a clear message first. */
+export const MAX_EXPORT_CHARS = 64 * 1024 * 1024;
+
+/** A plain file name for the save dialog's default: no folders, no characters a file system rejects. */
+export const validExportName = (name: unknown, format: string): name is string =>
+  text(name, 200) && /^[^\\/:*?"<>|\u0000-\u001f.][^\\/:*?"<>|\u0000-\u001f]*$/.test(name) && name.toLowerCase().endsWith(`.${format}`);
+
+function validExport(value: Record<string, unknown>): boolean {
+  if ((value.format !== 'svg' && value.format !== 'png') || !validExportName(value.name, value.format) || typeof value.data !== 'string' || !value.data.length || value.data.length > MAX_EXPORT_CHARS) return false;
+  return value.format === 'svg' ? value.data.startsWith('<svg') : value.data.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value.data);
 }
 
 /** Rebase deliberate placements on the latest view so another panel's moves survive. */

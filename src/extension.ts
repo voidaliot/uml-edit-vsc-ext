@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { homedir } from 'node:os';
 import { parseDocument } from './core/parser';
 import { applyDiagramEdit } from './core/edits';
 import { starterSource } from './core/templates';
 import { isPlantUmlFile, layoutFileName, parseLayoutFile, serializeLayoutFile, validateSource } from './core/layout-file';
-import type { DiagramKind, DiagramLayout, HostMessage, Layouts, WebviewMessage } from './shared/protocol';
+import type { DiagramKind, DiagramLayout, ExportFormat, HostMessage, Layouts, WebviewMessage } from './shared/protocol';
 import { mergeLayoutPositions, minimalTextChange, requireDocumentVersion, validWebviewMessage } from './host/messages';
 
 export const EDITOR_VIEW_TYPE = 'aliot.umlEditor';
@@ -57,6 +58,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('aliotUml.newDiagram', () => provider.newDiagram()),
     vscode.commands.registerCommand('aliotUml.openSource', (uri?: vscode.Uri) => provider.openSource(uri ?? vscode.window.activeTextEditor?.document.uri ?? provider.activeUri)),
+    vscode.commands.registerCommand('aliotUml.exportSvg', () => provider.requestExport('svg')),
+    vscode.commands.registerCommand('aliotUml.exportPng', () => provider.requestExport('png')),
   );
 }
 
@@ -161,6 +164,25 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     }
   }
 
+  /** Only the webview can draw the diagram, so a command asks it for the image it then sends back. */
+  async requestExport(format: ExportFormat): Promise<void> {
+    const session = this.activeSession;
+    if (!session || session.disposed || !session.ready) { void vscode.window.showInformationMessage('Open a diagram in the Aliot UML Editor to export it.'); return; }
+    await this.post(session, { type: 'exportRequest', format });
+  }
+
+  /** Writes an exported image where the user chooses, next to the diagram by default. Nothing is written without that choice. */
+  private async saveExport(document: vscode.TextDocument, message: Extract<WebviewMessage, { type: 'export' }>): Promise<void> {
+    const folder = document.uri.scheme === 'untitled' ? vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file(homedir()) : vscode.Uri.joinPath(document.uri, '..');
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.joinPath(folder, message.name), saveLabel: 'Export', title: `Export diagram as ${message.format.toUpperCase()}`,
+      filters: message.format === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] },
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(target, message.format === 'svg' ? new TextEncoder().encode(message.data) : Buffer.from(message.data, 'base64'));
+    void vscode.window.showInformationMessage(`Exported ${basename(target.path)}.`);
+  }
+
   private async handleMessage(session: EditorSession, message: WebviewMessage): Promise<void> {
     if (session.disposed) return;
     const document = session.document;
@@ -222,6 +244,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         break;
       }
       case 'openSource': await this.openSource(document.uri, message.line); break;
+      case 'export': await this.saveExport(document, message); break;
       case 'undo':
       case 'redo': await this.history(session, message.type); break;
     }
@@ -412,7 +435,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     const nonce = randomBytes(18).toString('base64');
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview.js'));
     const stylesheet = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview.css'));
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src 'none';"><link rel="stylesheet" href="${stylesheet}"><title>Aliot UML Editor</title></head><body><div id="root"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src 'none';"><link rel="stylesheet" href="${stylesheet}"><title>Aliot UML Editor</title></head><body><div id="root"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
   }
 }
 

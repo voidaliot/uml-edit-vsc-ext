@@ -11,6 +11,7 @@ import { UmlNodeView, type UmlNode } from './nodes';
 import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
 import { prepareGraphPorts, relationHandles } from './connections';
 import { alignBoxes, clearOfPinned, containerBounds, freeformKinds, freeSpot, type Alignment, type Box } from './arrange';
+import { ExportMenu } from './ExportMenu';
 
 type FlowNode = UmlNode;
 type DocumentState = Extract<HostMessage, { type: 'document' }>;
@@ -631,6 +632,10 @@ export function App() {
         <ToolButton title="Distribute horizontally" onClick={() => align('distribute-x')} disabled={selectedNodes.length < 3}><AlignHorizontalSpaceAround size={16} /></ToolButton>
         <ToolButton title="Distribute vertically" onClick={() => align('distribute-y')} disabled={selectedNodes.length < 3}><AlignVerticalSpaceAround size={16} /></ToolButton>
       </div></>}
+      <span className="toolbar-divider" />
+      <div className="toolbar-group">
+        <ExportMenu canvas={canvas} fileName={documentState?.fileName} diagram={diagram && { index: parsed.diagrams.indexOf(diagram), title: diagram.title, count: parsed.diagrams.length }} disabled={!native || !nodes.length} onError={setError} />
+      </div>
       <span className="toolbar-divider" />
       <div className="toolbar-group">
         <ToolButton title="Toggle minimap" onClick={() => setShowMinimap(!showMinimap)} active={showMinimap}><MapIcon size={16} /></ToolButton>

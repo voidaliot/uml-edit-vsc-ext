@@ -1,8 +1,9 @@
-import type { DiagramKind, HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
+import type { DiagramKind, ExportFormat, HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
 import { applyDiagramEdit } from '../core/edits';
 import { starterSource } from '../core/templates';
 import { mergeLayoutPositions } from '../host/messages';
 import { MAX_SOURCE_BYTES, validateSource } from '../core/layout-file';
+import { toBase64 } from './export';
 
 declare global {
   interface Window {
@@ -74,6 +75,16 @@ function downloadText(content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url; link.download = /\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`; link.style.display = 'none';
+  document.body.append(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** VS Code asks where to save an exported image; the browser previews download it like any file. */
+export async function saveExport(name: string, format: ExportFormat, content: string | Blob): Promise<void> {
+  if (vscode) { vscode.postMessage({ type: 'export', format, name, data: typeof content === 'string' ? content : await toBase64(content) }); return; }
+  const url = URL.createObjectURL(typeof content === 'string' ? new Blob([content], { type: 'image/svg+xml' }) : content);
+  const link = document.createElement('a');
+  link.href = url; link.download = name; link.style.display = 'none';
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

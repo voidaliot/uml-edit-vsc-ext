@@ -122,7 +122,7 @@ export async function run(): Promise<void> {
   await extension.activate();
   assert.ok(extension.isActive, 'The extension activates without throwing.');
   const commands = await vscode.commands.getCommands(true);
-  for (const command of ['aliotUml.openEditor', 'aliotUml.newDiagram', 'aliotUml.openSource']) {
+  for (const command of ['aliotUml.openEditor', 'aliotUml.newDiagram', 'aliotUml.openSource', 'aliotUml.exportSvg', 'aliotUml.exportPng']) {
     assert.ok(commands.includes(command), `${command} must be registered.`);
   }
   assert.ok(!commands.includes('aliotUml.installRenderer'), 'No external renderer installation command may be registered.');
