@@ -4,11 +4,13 @@ import { parseDocument } from '../src/core/parser';
 import { layoutGraph, setGraphEngine } from '../src/core/graph-layout';
 import { nativeTemplates } from '../src/core/templates';
 import type { Point } from '../src/shared/protocol';
-const dir = process.env.SAMPLES!;
+// Prints both engines' numbers for the same diagrams:
+// COMPARE_LAYOUTS=1 npx vitest run test/layout-engines.compare.test.ts
+const dir = new URL('./fixtures/layout-compare', import.meta.url).pathname;
 const hits = (a: Point, b: Point, r: { x: number; y: number; width: number; height: number }) => { let f = 0, t = 1; for (const [d, lo, hi] of [[b.x - a.x, r.x + 2 - a.x, r.x + r.width - 2 - a.x], [b.y - a.y, r.y + 2 - a.y, r.y + r.height - 2 - a.y]]) { if (Math.abs(d) < 1e-9) { if (lo >= 0 || hi <= 0) return false; continue; } f = Math.max(f, Math.min(lo / d, hi / d)); t = Math.min(t, Math.max(lo / d, hi / d)); if (f >= t) return false; } return true; };
 const cross = (p: Point, q: Point, r: Point, s: Point) => { const d = (q.x - p.x) * (s.y - r.y) - (q.y - p.y) * (s.x - r.x); if (Math.abs(d) < 1e-9) return false; const t = ((r.x - p.x) * (s.y - r.y) - (r.y - p.y) * (s.x - r.x)) / d, u = ((r.x - p.x) * (q.y - p.y) - (r.y - p.y) * (q.x - p.x)) / d; return t > .02 && t < .98 && u > .02 && u < .98; };
-test('compare', () => {
-  const cases: [string, string][] = [...readdirSync(dir).filter(f => /^(class|state|usecase|component)\.puml$|^x-/.test(f)).map(f => [f.replace('.puml', ''), readFileSync(`${dir}/${f}`, 'utf8')] as [string, string]), ...nativeTemplates.filter(t => ['class', 'state', 'usecase', 'component', 'deployment', 'entity', 'object', 'c4', 'archimate', 'dot'].includes(t.kind)).map(t => [`tpl-${t.kind}`, t.source] as [string, string])];
+test.skipIf(!process.env.COMPARE_LAYOUTS)('compare', () => {
+  const cases: [string, string][] = [...readdirSync(dir).filter(f => f.endsWith('.puml')).map(f => [f.replace('.puml', ''), readFileSync(`${dir}/${f}`, 'utf8')] as [string, string]), ...nativeTemplates.filter(t => ['class', 'state', 'usecase', 'component', 'deployment', 'entity', 'object', 'c4', 'archimate', 'dot'].includes(t.kind)).map(t => [`tpl-${t.kind}`, t.source] as [string, string])];
   const out: string[] = [];
   for (const [name, source] of cases) for (const engine of ['native', 'dagre'] as const) {
     setGraphEngine(engine);
