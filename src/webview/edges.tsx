@@ -18,7 +18,13 @@ export type UmlEdge = Edge<{
   onEdit: (relation: DiagramRelation) => void;
   /** Clicking a label picks its connector, like clicking the line. */
   onSelect?: (id: string, extend: boolean) => void;
+  /** Its ends can be dragged to another element. */
+  reconnectable?: boolean;
 }, 'uml'>;
+
+/** React Flow centres each reconnect anchor this far outside the end it moves; the grips sit on those anchors. */
+export const reconnectRadius = 10;
+const gripCenter = (x: number, y: number, side: string): Point => ({ x: x + (side === 'right' ? reconnectRadius : side === 'left' ? -reconnectRadius : 0), y: y + (side === 'bottom' ? reconnectRadius : side === 'top' ? -reconnectRadius : 0) });
 
 function marker(arrow: string, side: 'start' | 'end'): string | undefined {
   const part = side === 'start' ? arrow.split(/[-.]/)[0] : arrow.split(/[-.]/).at(-1)!;
@@ -101,6 +107,7 @@ export function UmlEdgeView({ id, source, target, sourceX, sourceY, targetX, tar
   return <>
     <g className={data?.onMoveSequence ? 'sequence-message-drag nodrag nopan' : undefined} onPointerDown={startDrag}><BaseEdge id={id} path={path} markerStart={marker(arrow, 'start')} markerEnd={schedule ? 'url(#uml-schedule-arrow)' : activity ? 'url(#uml-flow-arrow)' : marker(arrow, 'end')} style={{ stroke: selected ? 'var(--accent)' : 'var(--diagram-line)', strokeWidth: stroke.bold ? 3 : selected ? 2 : activity || schedule ? 1.2 : 1.5, strokeDasharray: stroke.strokeDasharray }} interactionWidth={18} /></g>
     <EdgeLabelRenderer><button className={`edge-label nodrag nopan ${data?.onMoveSequence ? 'sequence-message-label' : ''} ${activity ? 'activity-edge-label' : ''} ${selected ? 'selected' : ''} ${!relation.label ? 'empty-label' : ''}`} style={{ transform: `${labelAnchor} translate(${labelX}px,${labelY}px)` }} onPointerDown={startDrag} onKeyDown={event => { if (data?.onMoveSequence && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); void data.onMoveSequence(relation, Math.max(0, data.sequenceIndex! + (event.key === 'ArrowUp' ? -1 : 1)), data.version!, data.diagramId!); } }} onDoubleClick={event => { event.stopPropagation(); data?.onEdit(relation); }} onClick={event => { if (dragged.current) { dragged.current = false; return; } if (event.detail === 1 && !relation.label && selected) data?.onEdit(relation); else if (event.detail === 1) data?.onSelect?.(id, event.shiftKey || event.ctrlKey || event.metaKey); }} aria-label={`Edit relationship${relation.label ? ` ${relation.label}` : ` from ${source} to ${target}`}`} title={data?.onMoveSequence ? 'Drag up or down to reorder; double-click to edit message' : 'Double-click to edit relationship'}>{relation.meta?.number !== undefined && <b>{String(relation.meta.number)}. </b>}<RichText text={relation.label || (selected ? '+ label' : '')} /></button></EdgeLabelRenderer>
+    {selected && data?.reconnectable && [gripCenter(sourceX, sourceY, sourcePosition), gripCenter(targetX, targetY, targetPosition)].map((point, index) => <circle key={index} className="edge-grip" cx={point.x} cy={point.y} r={4.5} />)}
     {(relation.sourceMultiplicity || relation.targetMultiplicity) && <EdgeLabelRenderer>{relation.sourceMultiplicity && <span className="multiplicity" style={{ transform: `translate(${sourceCardinality.x}px,${sourceCardinality.y}px)` }}>{relation.sourceMultiplicity}</span>}{relation.targetMultiplicity && <span className="multiplicity" style={{ transform: `translate(${targetCardinality.x}px,${targetCardinality.y}px)` }}>{relation.targetMultiplicity}</span>}</EdgeLabelRenderer>}
   </>;
 }

@@ -22,6 +22,8 @@ export function validEdit(value: unknown): value is DiagramEdit {
     case 'deleteElements': return [value.elementIds, value.relationIds].every(list => Array.isArray(list) && list.length <= 20000 && list.every(item => id(item)));
     case 'replaceSource':
     case 'insertSnippet': return text(value.source, 2 * 1024 * 1024);
+    case 'addConnectedElement': return id(value.source) && id(value.kind) && text(value.name) && text(value.arrow, 100) && text(value.label) && (value.sequenceRow === undefined || version(value.sequenceRow) && value.sequenceRow <= 20000);
+    case 'reconnectRelation': return id(value.relationId) && (value.end === 'source' || value.end === 'target') && id(value.elementId);
     default: return false;
   }
 }

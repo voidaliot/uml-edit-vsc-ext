@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ReactFlow, Background, BackgroundVariant, MiniMap, applyNodeChanges, applyEdgeChanges, ConnectionMode, SelectionMode, useReactFlow, useNodesInitialized, type NodeTypes, type EdgeTypes, type Connection, type Viewport, type NodeChange } from '@xyflow/react';
+import type { FinalConnectionState } from '@xyflow/react';
 import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowLeftRight, Check, Code2, Download, FilePlus2, FolderOpen, Hand, Map as MapIcon, ListTree, Maximize, Minus, MousePointer2, Plus, Redo2, RefreshCw, Shapes, SquareArrowOutUpRight, Trash2, Undo2, X } from 'lucide-react';
 import { parseDocument, umlFamilies } from '../core/parser';
 import { applyDiagramEdit } from '../core/edits';
@@ -11,6 +12,9 @@ import { UmlNodeView, type UmlNode } from './nodes';
 import { EdgeMarkers, UmlEdgeView, type UmlEdge } from './edges';
 import { prepareGraphPorts, relationHandles } from './connections';
 import { alignBoxes, clearOfPinned, containerBounds, freeformKinds, freeSpot, type Alignment, type Box } from './arrange';
+import { QuickConnect, connectableKinds, connectionDrop, type QuickAdd } from './QuickConnect';
+import { canReconnect } from './connections';
+import { reconnectRadius } from './edges';
 
 type FlowNode = UmlNode;
 type DocumentState = Extract<HostMessage, { type: 'document' }>;
@@ -51,6 +55,7 @@ export function App() {
   const [menu, setMenu] = useState<ContextMenu>();
   const [elementDraft, setElementDraft] = useState<ElementDraft>();
   const [relationDraft, setRelationDraft] = useState<RelationDraft>();
+  const [quickAdd, setQuickAdd] = useState<QuickAdd>();
   const [selectedId, setSelectedId] = useState<string>();
   const [kinds, setKinds] = useState<Record<string, DiagramKind>>(() => loadViewState().kinds ?? {});
   const [blankStart, setBlankStart] = useState(false);
@@ -73,6 +78,7 @@ export function App() {
   const keyboardPlacement = useRef<{ diagramId: string; version: number; positions: Record<string, Point> } | undefined>(undefined);
   const pendingPlacement = useRef<{ diagramId: string; knownIds: Set<string>; point?: Point } | undefined>(undefined);
   const reveal = useRef<string | undefined>(undefined);
+  const reconnecting = useRef<{ id: string; end: 'source' | 'target' } | undefined>(undefined);
   const kindsRef = useRef(kinds);
   kindsRef.current = kinds;
   const pendingEdit = useRef<{ expectedSource: string; version: number; resolve: (applied: boolean) => void; timer: number } | undefined>(undefined);
@@ -115,6 +121,7 @@ export function App() {
         setNodes([]); setEdges([]); setActiveId('diagram-1'); setSelectedId(undefined); setMenu(undefined);
         setElementDraft(undefined); setRelationDraft(undefined); setSourceOpen(false); setSourceRequested(false); setSourceDraft(''); setSourceBase(''); setSourceDiagram('');
         setShowGallery(false); setError(''); setBusy(null); setApplyingEdit(false);
+        setQuickAdd(undefined); reconnecting.current = undefined;
       }
       else if (message.type === 'showSource') setSourceRequested(true);
       else if (message.type === 'error') { setError(message.message); setBusy(null); if (pendingEdit.current) { window.clearTimeout(pendingEdit.current.timer); pendingEdit.current.resolve(false); pendingEdit.current = undefined; } }
@@ -482,6 +489,53 @@ export function App() {
     if (applied) setRelationDraft(undefined);
   };
 
+  /**
+   * A connection released on an element's body links to that element, as on one of its handles.
+   * Released on empty canvas, it offers a new element there, linked from where the drag began.
+   */
+  const connectEnd = (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+    if (!diagram || !documentState || !native || hand || !state.fromNode) return;
+    const drop = connectionDrop(event, state), moving = reconnecting.current;
+    if (!drop || drop.nodeId !== undefined && flow.getNode(drop.nodeId)?.connectable === false) return;
+    if (moving) {
+      const edge = edges.find(item => item.id === moving.id);
+      if (edge && drop.nodeId) reconnect(edge, { source: moving.end === 'source' ? drop.nodeId : edge.source, target: moving.end === 'target' ? drop.nodeId : edge.target, sourceHandle: null, targetHandle: null });
+      return;
+    }
+    if (derivedRelations) return;
+    if (drop.nodeId !== undefined) {
+      if (drop.nodeId && drop.nodeId !== state.fromNode.id) connect({ source: state.fromNode.id, target: drop.nodeId, sourceHandle: state.fromHandle?.id ?? null, targetHandle: null });
+      return;
+    }
+    const match = state.fromHandle?.id?.match(/^sequence-(\d+)$/);
+    const sequenceRow = diagram.kind === 'sequence' ? match ? Number(match[1]) : Number(diagram.meta?.sequenceRows ?? diagram.relations.length) : undefined;
+    const arrow = defaultArrow(diagram.kind), source = state.fromNode.id;
+    const choices = connectableKinds(documentState.source, diagram, palette, source, arrow, sequenceRow, kinds[diagram.id]);
+    if (!choices.length) { setError('No element can be added and connected here in one step. Add the element first, then connect it.'); return; }
+    const rect = canvas.current!.getBoundingClientRect(), at = flow.screenToFlowPosition(drop.point);
+    setMenu(undefined);
+    setQuickAdd({ x: Math.min(drop.point.x - rect.left, rect.width - 240), y: Math.min(drop.point.y - rect.top, rect.height - 60 - 32 * choices.length), point: { x: at.x - 96, y: at.y - 40 }, source, arrow, sequenceRow, kinds: choices, kind: choices.length === 1 ? choices[0] : undefined, name: '', version: documentState.version, diagramId: diagram.id });
+  };
+  const addConnected = async () => {
+    const draft = quickAdd;
+    if (!draft?.kind || !draft.name.trim() || !diagram) return;
+    pendingPlacement.current = { diagramId: draft.diagramId, knownIds: new Set(diagram.elements.map(element => element.id)), point: draft.point };
+    const applied = await commit({ type: 'addConnectedElement', source: draft.source, kind: draft.kind, name: draft.name.trim(), arrow: draft.arrow, label: '', sequenceRow: draft.sequenceRow }, draft.version, draft.diagramId);
+    if (applied) setQuickAdd(undefined);
+    else pendingPlacement.current = undefined;
+  };
+  const cancelQuickAdd = useCallback(() => setQuickAdd(undefined), []);
+  // Only a selected relationship shows its end grips, so a drag near an unselected end still starts a new connection.
+  const relinkable = Boolean(diagram && native && !hand && !derivedRelations && canReconnect(diagram));
+  const linkedEdges = useMemo(() => relinkable ? edges.map(edge => edge.selected && edge.data ? { ...edge, reconnectable: true, data: { ...edge.data, reconnectable: true } } : edge) : edges, [edges, relinkable]);
+  const reconnect = (edge: UmlEdge, connection: Connection) => {
+    const moving = reconnecting.current;
+    if (!moving || moving.id !== edge.id || !edge.data) return;
+    const elementId = moving.end === 'source' ? connection.source : connection.target;
+    if (!elementId || elementId === edge[moving.end]) return;
+    void commit({ type: 'reconnectRelation', relationId: edge.id, end: moving.end, elementId }, edge.data.version, edge.data.diagramId);
+  };
+
   const autoLayout = () => {
     if (!diagram) return;
     relayoutFit.current = diagram;
@@ -656,7 +710,7 @@ export function App() {
         <div className="outline-bottom"><span className="small-label">{native ? 'ADD ELEMENT' : 'AUTHORING'}</span>{native && diagram?.meta?.openKind === true && <label className="kind-select">Diagram type<select aria-label="Diagram type" value={undecided ? '' : diagram.kind} onChange={event => chooseKind(diagram.id, event.target.value as DiagramKind)}>{undecided && <option value="">Choose…</option>}{umlFamilies.map(kind => <option key={kind} value={kind}>{getTemplate(kind)?.label ?? kind}</option>)}</select></label>}{native && undecided ? null : native && palette.length > 0 ? <div className="palette-list">{palette.map(kind => <button key={kind} title={`Add ${title(kind).toLowerCase()}`} onClick={() => beginElement(kind)}><Plus size={12} /><span>{kind}</span></button>)}</div> : <button className="text-button" onClick={openSource} disabled={!documentState}><Code2 size={14} /> Edit diagram source</button>}</div>
       </aside>}
       <main ref={canvas} className={`canvas-shell ${hand ? 'hand-tool' : 'select-tool'}`} aria-label="Diagram canvas" onPointerDownCapture={() => { relayoutFit.current = undefined; if (diagram) lastScene.current = diagram.id; }}>
-        <ReactFlow<FlowNode, UmlEdge> nodes={native ? nodes : []} edges={native ? edges : []} nodeTypes={nodeTypes} edgeTypes={edgeTypes} proOptions={{ hideAttribution: true }}
+        <ReactFlow<FlowNode, UmlEdge> nodes={native ? nodes : []} edges={native ? linkedEdges : []} nodeTypes={nodeTypes} edgeTypes={edgeTypes} proOptions={{ hideAttribution: true }}
           onNodesChange={changeNodes}
           onEdgesChange={changes => setEdges(previous => applyEdgeChanges(changes, previous))}
           onNodeClick={(_, node) => { setSelectedId(node.id); setMenu(undefined); }}
@@ -674,6 +728,8 @@ export function App() {
           onMove={(_, viewport) => setZoom(viewport.zoom)}
           onMoveEnd={(_, viewport) => persistLayout(viewport)}
           onConnect={connect} connectionMode={ConnectionMode.Loose} connectionRadius={28}
+          onConnectEnd={connectEnd} onReconnect={reconnect} edgesReconnectable={false} reconnectRadius={reconnectRadius}
+          onReconnectStart={(_, edge, handleType) => { reconnecting.current = { id: edge.id, end: handleType === 'target' ? 'source' : 'target' }; }} onReconnectEnd={() => { reconnecting.current = undefined; }}
           nodesDraggable={native && !hand} nodesConnectable={native && !hand && !derivedRelations} elementsSelectable={native && !hand}
           selectNodesOnDrag={!hand} selectionOnDrag={native && !hand} selectionMode={SelectionMode.Partial} elevateNodesOnSelect={false} multiSelectionKeyCode={['Meta', 'Control', 'Shift']} selectionKeyCode={null}
           panOnDrag={hand ? [0, 1] : [1]} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} panActivationKeyCode={null} zoomActivationKeyCode={null}
@@ -702,6 +758,7 @@ export function App() {
         </div>}
         {elementDraft && <div className="floating-form nowheel" role="dialog" aria-label="Add element"><div className="form-heading"><span>Add {elementDraft.kind}</span><ToolButton title="Cancel adding element" onClick={() => setElementDraft(undefined)}><X size={15} /></ToolButton></div><form onSubmit={event => { event.preventDefault(); addElement(); }}><label>Name<input autoFocus aria-label="New element name" placeholder={`Name this ${elementDraft.kind}`} value={elementDraft.name} onChange={event => setElementDraft({ ...elementDraft, name: event.target.value })} onKeyDown={event => { if (event.key === 'Escape') setElementDraft(undefined); }} /></label><div className="form-actions"><button type="button" onClick={() => setElementDraft(undefined)}>Cancel</button><button className="primary" type="submit" disabled={!elementDraft.name.trim()}><Plus size={14} /> Add element</button></div></form></div>}
         {relationDraft && <div className="floating-form relation-form nowheel" role="dialog" aria-label="Edit relationship"><div className="form-heading"><span>{relationDraft.relationId ? 'Edit relationship' : 'Connect elements'}</span><ToolButton title="Cancel relationship" onClick={() => setRelationDraft(undefined)}><X size={15} /></ToolButton></div><form onSubmit={event => { event.preventDefault(); saveRelation(); }}><div className="connection-summary"><span>{diagram?.elements.find(element => element.id === relationDraft.source)?.name ?? relationDraft.source}</span><ArrowLeftRight size={14} /><span>{diagram?.elements.find(element => element.id === relationDraft.target)?.name ?? relationDraft.target}</span></div><label>Relationship<select aria-label="Relationship type" value={relationDraft.arrow} onChange={event => setRelationDraft({ ...relationDraft, arrow: event.target.value })}>{!(diagram && arrowTypes[diagram.kind] || structuralArrows).some(([arrow]) => arrow === relationDraft.arrow) && <option value={relationDraft.arrow}>{relationDraft.arrow}</option>}{(diagram && arrowTypes[diagram.kind] || structuralArrows).map(([arrow, name]) => <option key={arrow} value={arrow}>{name} ({arrow})</option>)}</select></label><label>Label<input aria-label="Relationship label" autoFocus placeholder="Optional label" value={relationDraft.label} onChange={event => setRelationDraft({ ...relationDraft, label: event.target.value })} /></label><div className="form-actions"><button type="button" onClick={() => setRelationDraft(undefined)}>Cancel</button><button className="primary" type="submit"><Check size={14} /> Apply</button></div></form></div>}
+        {quickAdd && <QuickConnect draft={quickAdd} sourceName={diagram?.elements.find(element => element.id === quickAdd.source)?.name || quickAdd.source} onChange={setQuickAdd} onSubmit={addConnected} onCancel={cancelQuickAdd} />}
         {sourceOpen && <section className="source-panel nowheel" aria-label="PlantUML source editor"><div className="form-heading"><div><Code2 size={15} /><span>PlantUML source</span><small title={sourceTargetLabel}>{sourceTargetLabel} · {sourceDraft !== sourceBase ? 'Unsaved draft' : 'In sync'}</small></div><ToolButton title="Close source editor" onClick={() => setSourceOpen(false)}><X size={15} /></ToolButton></div>{sourceChanged && <div className="draft-notice">The document changed. Your draft is preserved. Reload the current source before making further changes.<button onClick={reloadSource}>Reload source</button></div>}<textarea aria-label="PlantUML source" spellCheck={false} value={sourceDraft} onChange={event => setSourceDraft(event.target.value)} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); commit({ type: 'replaceSource', source: sourceDraft }, sourceVersion, sourceDiagram); } if (event.key === 'Tab') { event.preventDefault(); const target = event.currentTarget, start = target.selectionStart, end = target.selectionEnd; setSourceDraft(sourceDraft.slice(0, start) + '  ' + sourceDraft.slice(end)); requestAnimationFrame(() => { target.selectionStart = target.selectionEnd = start + 2; }); } }} /><div className="source-footer"><span>Ctrl+Enter to apply · Escape leaves your draft</span><button className="primary" onClick={() => commit({ type: 'replaceSource', source: sourceDraft }, sourceVersion, sourceDiagram)} disabled={sourceDraft === sourceBase || Boolean(sourceChanged)}><Check size={13} /> Apply changes</button></div></section>}
         {error && <div className="error-toast" role="alert"><span>{error}</span><ToolButton title="Dismiss error" onClick={() => setError('')}><X size={14} /></ToolButton></div>}
         {busy && !error && <div className="connection-notice" role="status">{busy}</div>}

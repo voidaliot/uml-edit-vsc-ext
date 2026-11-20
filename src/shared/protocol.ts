@@ -51,7 +51,11 @@ export type DiagramEdit =
   /** One undoable step for a whole selection. */
   | { type: 'deleteElements'; elementIds: string[]; relationIds: string[] }
   | { type: 'replaceSource'; source: string }
-  | { type: 'insertSnippet'; source: string };
+  | { type: 'insertSnippet'; source: string }
+  /** A new element and a relationship from an existing one to it, as one undoable step. */
+  | { type: 'addConnectedElement'; source: string; kind: string; name: string; arrow: string; label: string; sequenceRow?: number }
+  /** Re-attach one end of a relationship; only that endpoint's source token changes. */
+  | { type: 'reconnectRelation'; relationId: string; end: 'source' | 'target'; elementId: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;
