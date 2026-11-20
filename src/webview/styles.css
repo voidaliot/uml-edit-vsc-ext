@@ -186,6 +186,8 @@ option { background: var(--panel); color: var(--text); }
 .edge-label { position: absolute; pointer-events: all; font: 10px var(--font); color: var(--text); background: var(--canvas); border: 1px solid transparent; border-radius: 3px; padding: 3px 5px; max-width: 240px; white-space: pre-wrap; }
 .edge-label:hover, .edge-label.selected { border-color: var(--accent); background: var(--raised); }
 .edge-label.empty-label { min-width: 15px; min-height: 10px; background: transparent; padding: 1px 4px; }
+.edge-grip { fill: var(--canvas); stroke: var(--accent); stroke-width: 1.5; pointer-events: none; }
+.react-flow__edge.updating .edge-grip { fill: var(--accent); }
 .edge-label.empty-label.selected { color: var(--muted); background: var(--canvas); }
 .form-hint { color: var(--muted); font-size: 10px; line-height: 1.6; margin: 0 0 10px; }
 .multiplicity { position: absolute; color: var(--text); background: var(--canvas); font: 10px var(--mono); padding: 1px 3px; pointer-events: none; }

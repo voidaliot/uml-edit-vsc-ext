@@ -9,6 +9,7 @@ import { moveSequenceEvent, sequenceInsertionLine } from './sequence';
 import { pasteInsertionLine, pasteLines } from './clipboard';
 import { setProperties } from './properties';
 import { moveToContainer } from './containment';
+import { addConnectedElement, reconnectRelation } from './relation-edits';
 
 const memberKinds = new Set(['class', 'abstract class', 'interface', 'enum', 'annotation', 'object', 'entity']);
 const relationArrows = new Set(['-->', '->', '<--', '<-', '--', '..', '..>', '<..', '<|--', '--|>', '<|..', '..|>', '*--', '--*', 'o--', '--o', '||--o{', '}o--||', '||--||', '}o--o{', '-->>', '->>', '<->', '<-->']);
@@ -180,6 +181,11 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     if (!Array.isArray(edit.elementIds) || !Array.isArray(edit.relationIds) || !edit.elementIds.length && !edit.relationIds.length) throw new Error('Select something to delete.');
     return deleteSelection(source, diagramId, edit.elementIds, edit.relationIds, options);
   }
+
+  // Connection gestures: composed from the element and relationship edits, or one endpoint token.
+  if (edit.type === 'addConnectedElement') return addConnectedElement(source, block, edit, options, applyDiagramEdit);
+  if (edit.type === 'reconnectRelation') return reconnectRelation(source, block, edit, options);
+
   if (edit.type === 'moveSequenceEvent') return moveSequenceEvent(source, block, edit.eventId, edit.row);
 
   // Clipboard and properties work on declaration lines; both refuse other families themselves.

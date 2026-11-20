@@ -1,4 +1,5 @@
 import type { DiagramBlock, DiagramElement, DiagramRelation, Point } from '../shared/protocol';
+import { familyFor } from '../core/families/registry';
 import type { ActivityRoute } from './routing';
 import type { Side } from './routing';
 
@@ -133,4 +134,9 @@ export function graphPortPosition(element: DiagramElement, port: GraphPort): Poi
     y = port.side === 'top' ? 12 - 12 * arc : height - 12 + 12 * arc;
   }
   return { x, y };
+}
+
+/** Relationship ends are re-attached by rewriting one token of a plain relation line; family syntax keeps its own forms. */
+export function canReconnect(diagram: DiagramBlock): boolean {
+  return !diagram.meta?.legacy && !diagram.meta?.derivedRelations && !familyFor(diagram.kind);
 }

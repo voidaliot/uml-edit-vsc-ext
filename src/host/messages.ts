@@ -25,6 +25,8 @@ export function validEdit(value: unknown): value is DiagramEdit {
     case 'paste': return text(value.kind, 100) && !!value.kind && text(value.source, 2 * 1024 * 1024);
     case 'properties': return id(value.elementId) && text(value.stereotype, 200) && text(value.color, 100);
     case 'moveToContainer': return id(value.elementId) && (value.parentId === undefined || id(value.parentId));
+    case 'addConnectedElement': return id(value.source) && id(value.kind) && text(value.name) && text(value.arrow, 100) && text(value.label) && (value.sequenceRow === undefined || version(value.sequenceRow) && value.sequenceRow <= 20000);
+    case 'reconnectRelation': return id(value.relationId) && (value.end === 'source' || value.end === 'target') && id(value.elementId);
     default: return false;
   }
 }

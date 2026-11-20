@@ -56,7 +56,11 @@ export type DiagramEdit =
   | { type: 'paste'; kind: DiagramKind; source: string }
   | { type: 'properties'; elementId: string; stereotype: string; color: string }
   /** Write an element's declaration into another container's body, or at block level without `parentId`. */
-  | { type: 'moveToContainer'; elementId: string; parentId?: string };
+  | { type: 'moveToContainer'; elementId: string; parentId?: string }
+  /** A new element and a relationship from an existing one to it, as one undoable step. */
+  | { type: 'addConnectedElement'; source: string; kind: string; name: string; arrow: string; label: string; sequenceRow?: number }
+  /** Re-attach one end of a relationship; only that endpoint's source token changes. */
+  | { type: 'reconnectRelation'; relationId: string; end: 'source' | 'target'; elementId: string };
 
 export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
 export type Layouts = Record<string, DiagramLayout>;
