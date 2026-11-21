@@ -45,6 +45,13 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
   const document = await vscode.workspace.openTextDocument(uri);
   // Source undo is VS Code's own stack; the text editor makes this document the undo target.
   await vscode.window.showTextDocument(document);
+  // Native undo goes to whichever editor has focus. Anything that takes it in between (a notification,
+  // a late editor from an earlier check) would send the step elsewhere, so each history step refocuses.
+  const focusSource = async () => {
+    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+    await eventually(() => vscode.window.activeTextEditor?.document === document, 'The source editor must have focus for native undo.');
+  };
+  const history = async (type: 'undo' | 'redo') => { await focusSource(); first.send({ type }); };
   const provider = new UmlEditorProvider(context(extensionUri)), first = channel(), second = channel();
   try {
     await provider.resolveCustomTextEditor(document, first.panel);
@@ -68,17 +75,17 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     first.send({ type: 'layout', version: document.version, diagramId: 'diagram-1', layout: { positions: { A, B } } });
     await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'The second move must be written.');
 
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A }), 'Undo must first revert the latest move.');
     assert.equal(document.getText(), renamed);
     await eventually(() => JSON.stringify(latest(first.messages).layouts['diagram-1']?.positions) === JSON.stringify({ A }), 'Undoing a move must refresh the panel that made it.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(() => document.getText() === source, 'Undo must then revert the rename.');
     assert.equal(JSON.stringify(await placement(layoutUri)), JSON.stringify({ A }));
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => await read(layoutUri) === null, 'Undoing the first move removes the now empty layout file.');
     assert.equal(document.getText(), source);
-    for (let step = 0; step < 3; step++) first.send({ type: 'redo' });
+    for (let step = 0; step < 3; step++) await history('redo');
     await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'Redo must replay the move, the rename and the second move.');
     console.log('PASS source edits and placement share one undo/redo history in order');
 
@@ -87,11 +94,11 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     first.send({ type: 'layout', version: document.version, diagramId: 'diagram-1', basePositions: { A, B }, baseBends: {}, layout: { positions: { A, B }, bends } });
     await eventually(async () => JSON.stringify(await bent()) === JSON.stringify(bends), 'A bend must be written to the layout file.');
     await eventually(() => JSON.stringify(latest(second.messages).layouts['diagram-1']?.bends) === JSON.stringify(bends), 'A bend must reach split views.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => await bent() === null && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'Undo must remove the bend and keep the placements.');
-    first.send({ type: 'redo' });
+    await history('redo');
     await eventually(async () => JSON.stringify(await bent()) === JSON.stringify(bends), 'Redo must restore the bend.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => await bent() === null, 'The bend is undone again for the steps that follow.');
     assert.equal(document.getText(), renamed, 'Bends never touch the PlantUML file.');
     console.log('PASS relationship bends share the placement history');
@@ -106,18 +113,19 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     const nudged = { x: 120, y: 95 };
     first.send({ type: 'layout', linked: true, version: document.version, diagramId: 'diagram-1', basePositions: { A, B: dropped }, layout: { positions: { A: nudged, B: dropped } } });
     await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A: nudged, B: dropped }), 'The second linked placement must be written.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'One undo must take back every linked placement together with its edit.');
-    first.send({ type: 'redo' });
+    await history('redo');
     await eventually(async () => document.getText() === edited && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A: nudged, B: dropped }), 'One redo must replay the edit together with its linked placements.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'The pair is undone again for the steps that follow.');
     console.log('PASS a placement linked to a source edit is undone and redone with it');
 
     // Undo from the text editor or Edit menu reverts the rename only; the move made after it stays next.
+    await focusSource();
     await vscode.commands.executeCommand('undo');
     await eventually(() => document.getText() === source, 'Native undo reverts the source.');
-    first.send({ type: 'undo' });
+    await history('undo');
     await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A }), 'The diagram history continues with the move after a native undo.');
     assert.equal(document.getText(), source);
     console.log('PASS native undo outside the diagram keeps the shared history consistent');
