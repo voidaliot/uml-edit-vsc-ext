@@ -1,6 +1,9 @@
 import type { DiagramBlock, DiagramElement, DiagramRelation, Point } from '../shared/protocol';
+import { familyFor } from '../core/families/registry';
 import type { ActivityRoute } from './routing';
 import type { Side } from './routing';
+import type { UmlEdge } from './edges';
+import type { UmlNode } from './nodes';
 
 export interface GraphPort { id: string; side: Side; fraction: number }
 
@@ -9,6 +12,21 @@ function center(element: DiagramElement | undefined, point: Point): Point {
   const width = Number(element?.meta?.connectionWidth ?? element?.meta?.width ?? widths[element?.kind ?? ''] ?? 192);
   const height = Number(element?.meta?.height ?? (['start', 'initial', 'end', 'final', 'merge', 'decision'].includes(element?.kind ?? '') ? width : 80));
   return { x: point.x + width / 2, y: point.y + height / 2 };
+}
+
+/** Layout bends stay valid only while both endpoints still sit where the layout put them. */
+export function activeRoute(relation: DiagramRelation, points: Record<string, Point>): Point[] | undefined {
+  const route = relation.meta?.route as Point[] | undefined, anchor = relation.meta?.routeAnchor as { source: Point; target: Point } | undefined;
+  if (!route?.length || !anchor) return;
+  const near = (a: Point | undefined, b: Point) => !!a && Math.abs(a.x - b.x) < .5 && Math.abs(a.y - b.y) < .5;
+  const at = (id: string) => Object.hasOwn(points, id) ? points[id] : undefined;
+  return near(at(relation.source), anchor.source) && near(at(relation.target), anchor.target) ? route : undefined;
+}
+
+function sideToward(element: DiagramElement | undefined, own: Point, other: Point): Side {
+  const width = Number(element?.meta?.width ?? 192), height = Number(element?.meta?.height ?? 80);
+  const dx = other.x - own.x, dy = other.y - own.y;
+  return Math.abs(dx) / width > Math.abs(dy) / height ? dx >= 0 ? 'right' : 'left' : dy >= 0 ? 'bottom' : 'top';
 }
 
 /** Side selection uses visible shape centers, so different node sizes cannot skew a trunk. */
@@ -36,6 +54,8 @@ function baseHandles(relation: DiagramRelation, diagram: DiagramBlock, points: R
     return ports;
   }
   if (relation.meta?.sourceHandle && relation.meta?.targetHandle) return { sourceHandle: String(relation.meta.sourceHandle), targetHandle: String(relation.meta.targetHandle) };
+  const bends = activeRoute(relation, points);
+  if (bends) return { sourceHandle: sideToward(sourceElement, source, bends[0]), targetHandle: sideToward(targetElement, target, bends.at(-1)!) };
   const hint = relation.arrow.replace(/\[[^\]]*\]/g, '').match(/[-.=](left|right|up|down|le|ri|do|l|r|u|d)(?=[-.=<>|o*{])/i)?.[1];
   if (hint && /^[ud]/i.test(hint)) return dy >= 0 ? { sourceHandle: 'bottom', targetHandle: 'top' } : { sourceHandle: 'top', targetHandle: 'bottom' };
   if (hint && /^[lr]/i.test(hint)) return dx >= 0 ? { sourceHandle: 'right', targetHandle: 'left' } : { sourceHandle: 'left', targetHandle: 'right' };
@@ -61,12 +81,12 @@ export function prepareGraphPorts(diagram: DiagramBlock, points: Record<string, 
     if (/hidden/i.test(relation.arrow) || relation.source === relation.target || relation.meta?.sourceHandle || relation.meta?.targetHandle) continue;
     const source = elements.get(relation.source), target = elements.get(relation.target);
     if (!source || !target || !Object.hasOwn(points, source.id) || !Object.hasOwn(points, target.id)) continue;
-    const handles = baseHandles(relation, diagram, points);
+    const handles = baseHandles(relation, diagram, points), route = activeRoute(relation, points);
     for (const end of ['source', 'target'] as const) {
       const element = end === 'source' ? source : target, opposite = end === 'source' ? target : source;
       const side = handles[end === 'source' ? 'sourceHandle' : 'targetHandle'] as Side;
       if (!['top', 'right', 'bottom', 'left'].includes(side)) continue;
-      const other = center(opposite, points[opposite.id]), own = center(element, points[element.id]);
+      const other = route ? end === 'source' ? route[0] : route.at(-1)! : center(opposite, points[opposite.id]), own = center(element, points[element.id]);
       const horizontal = side === 'top' || side === 'bottom';
       const width = Number(element.meta?.width ?? 192), height = Number(element.meta?.height ?? 80);
       const dx = other.x - own.x, dy = other.y - own.y;
@@ -116,4 +136,48 @@ export function graphPortPosition(element: DiagramElement, port: GraphPort): Poi
     y = port.side === 'top' ? 12 - 12 * arc : height - 12 + 12 * arc;
   }
   return { x, y };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Hand-placed bends leave each element from the side that faces its nearest bend. */
+export function bentHandles(points: Point[], source: Box, target: Box): { sourceHandle: Side; targetHandle: Side } {
+  const facing = (box: Box, point: Point): Side => {
+    const dx = point.x - (box.x + box.width / 2), dy = point.y - (box.y + box.height / 2);
+    return Math.abs(dx) / box.width > Math.abs(dy) / box.height ? dx >= 0 ? 'right' : 'left' : dy >= 0 ? 'bottom' : 'top';
+  };
+  return { sourceHandle: facing(source, points[0]), targetHandle: facing(target, points.at(-1)!) };
+}
+
+/**
+ * The relationships as the canvas offers them for editing: a selected one shows its end grips where it
+ * can be re-attached and its bend grips where it can be shaped; hand-placed bends replace the route.
+ */
+export function interactiveEdges(edges: UmlEdge[], nodes: UmlNode[], options: { relinkable: boolean; bendable: boolean; bends: Record<string, Point[]>; keys: Map<string, string>; onBends: (relationId: string, points: Point[]) => void }): UmlEdge[] {
+  const box = (id: string): Box | undefined => {
+    const node = nodes.find(item => item.id === id);
+    return node && { ...node.position, width: node.measured?.width ?? Number(node.data.element.meta?.width ?? 192), height: node.measured?.height ?? Number(node.data.element.meta?.height ?? 80) };
+  };
+  return edges.map(edge => {
+    const key = options.keys.get(edge.id), points = options.bendable && key && Object.hasOwn(options.bends, key) ? options.bends[key] : undefined;
+    const relink = options.relinkable && !!edge.selected, shape = options.bendable && !!edge.selected;
+    if (!edge.data || !points && !relink && !shape) return edge;
+    const from = box(edge.source), to = box(edge.target);
+    return { ...edge, ...(relink ? { reconnectable: true } : {}), ...(points && from && to ? bentHandles(points, from, to) : {}), data: { ...edge.data, reconnectable: relink, bends: points, onBends: shape ? options.onBends : undefined } };
+  });
+}
+
+/** A bend dragged near the line through a neighbour snaps onto it, so straight runs are easy to make. */
+export function snapBend(point: Point, neighbours: Point[], tolerance: number): Point {
+  let { x, y } = point;
+  for (const other of neighbours) {
+    if (Math.abs(other.x - x) < tolerance) x = other.x;
+    if (Math.abs(other.y - y) < tolerance) y = other.y;
+  }
+  return { x, y };
+}
+
+/** Relationship ends are re-attached by rewriting one token of a plain relation line; family syntax keeps its own forms. */
+export function canReconnect(diagram: DiagramBlock): boolean {
+  return !diagram.meta?.legacy && !diagram.meta?.derivedRelations && !familyFor(diagram.kind);
 }

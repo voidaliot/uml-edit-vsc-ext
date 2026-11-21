@@ -14,8 +14,9 @@ Create and edit diagrams directly in VS Code: rename a class, connect components
 
 - **Work directly on the diagram.** Double-click names and members, add elements from the canvas menu, and drag between connection handles for supported relationships.
 - **Keep readable source.** Edit `.puml` files or use the source panel inside the canvas. Source edits update the diagram; visual edits update the corresponding source.
-- **Start from a template.** Choose from 33 diagram families in a searchable gallery, then switch between multiple diagram blocks in the same file.
+- **Start from a template or from nothing.** Choose from 33 diagram families in a searchable gallery, with an example or blank, then switch between multiple diagram blocks in the same file.
 - **Your PlantUML stays plain PlantUML.** Manual positions go to a small layout file next to the diagram, so other tools and teammates without the extension see exactly the source you wrote.
+- **Edit like a drawing tool.** Copy, paste and duplicate, snap to guides while dragging, drop elements into packages, re-attach and bend relationships, and export SVG or PNG.
 - **Use familiar editor controls.** One undo/redo history for moves and edits, native VS Code save and unsaved-change handling, plus outline navigation, a minimap, zoom, fit, and **Re-layout**.
 - **Render locally.** No Java, Graphviz installation, PlantUML server, or remote rendering service is required.
 
@@ -24,9 +25,10 @@ Create and edit diagrams directly in VS Code: rename a class, connect components
 Requires **VS Code 1.104.0 or later** on a desktop or remote extension host.
 
 1. Install **Aliot UML Editor** from the Extensions view, or run `ext install voidaliot.aliot-uml-editor` from Quick Open (**Ctrl+P** / **Cmd+P**). For a downloaded `.vsix`, use **Extensions: Install from VSIX…** from the Command Palette.
-2. Run **Aliot UML: New Diagram** and choose a template, or open an existing `.puml`, `.plantuml`, `.pu`, or `.iuml` file.
-3. Double-click a label or compartment to edit it. Right-click empty canvas to add an element. Drag connection handles to create supported relationships.
-4. Save with **Ctrl+S** / **Cmd+S**. Manual positions are saved automatically in the layout file.
+2. Run **Aliot UML: New Diagram** and choose a template, or open an existing `.puml`, `.plantuml`, `.pu`, or `.iuml` file. Pick **Blank** in the gallery to draw from an empty canvas.
+3. Add elements from the palette in the outline, or right-click the canvas to place one there. Double-click a label or compartment to edit it. Drag connection handles to create supported relationships.
+4. Select with a click, Shift-click, a dragged marquee or **Ctrl+A** / **Cmd+A**; press **Delete** to remove the selection, or drag it to arrange.
+5. Save with **Ctrl+S** / **Cmd+S**. Manual positions are saved automatically in the layout file.
 
 If a file opens as text, right-click its editor tab and choose **Reopen Editor With… → Aliot UML Editor**, or run **Aliot UML: Open Diagram**.
 
@@ -76,12 +78,14 @@ Order "1" *-- "many" LineItem : contains
 
 Double-click **Order** to rename it, edit its members, or move the shapes. Use **Re-layout** to clear manual placements and arrange the current diagram again.
 
+An empty `@startuml` block does not say which diagram it is, so the canvas asks. Your choice holds while the source leaves it open: a use case diagram may begin with an actor without being drawn as a sequence diagram. It is kept with the editor, not written into the file.
+
 ## Where your layout is saved
 
 | File | What it stores |
 | --- | --- |
 | `order.puml` | Your PlantUML source, exactly as written. Moving shapes never changes it. |
-| `order.puml.layout.json` | Manual positions and sizes, one element per line. Created only once you move something; removed again by **Re-layout**. |
+| `order.puml.layout.json` | Manual positions, sizes and relationship bends, one element per line. Created only once you move something; removed again by **Re-layout**. |
 
 Commit the layout file to share your arrangement, or ignore it and let everyone use the automatic layout. Renaming, moving or deleting a diagram in VS Code does the same to its layout file; outside VS Code, move both together. Pan and zoom stay in your workspace and are not shared. See the [layout file format](docs/layout-file-format.md).
 
@@ -91,7 +95,19 @@ Commit the layout file to share your arrangement, or ignore it and let everyone 
 | --- | --- |
 | Rename | Double-click a name, or select and press **F2** |
 | Edit members or properties | Double-click the compartment or shape content |
-| Add an element or child | Right-click the canvas or a supported container |
+| Add an element or child | Use the outline palette, or right-click the canvas or a supported container |
+| Select several | Shift-click or Ctrl/Cmd-click, drag a marquee, or **Ctrl+A** / **Cmd+A** |
+| Delete the selection | **Delete** or **Backspace**, the toolbar, or the context menu |
+| Align or distribute | Select two or more elements and use the arrange buttons in the toolbar |
+| Copy / cut / paste / duplicate | **Ctrl+C** / **X** / **V** / **D** (**Cmd** on macOS), or the context menu |
+| Add a connected element | Drag a connection handle onto empty canvas |
+| Re-attach a relationship | Select it and drag an end grip to another element |
+| Bend a relationship | Select it, drag the middle grip; double-click a bend to remove it |
+| Move into or out of a package | Drop the element on a package, drag it clear of its package, or **Move to…** in the context menu |
+| Place without snapping | Hold **Alt** while dragging, or switch **Snap while dragging** off in the toolbar |
+| Find an element | **Ctrl+F** / **Cmd+F** |
+| Export SVG or PNG | **Export image** in the toolbar |
+| Show all shortcuts | **?** |
 | Edit a relationship | Double-click its connector or label |
 | Reorder a sequence message | Drag its line or label up/down; focused labels also accept **↑** / **↓** |
 | Move or resize a sequence divider | Drag its label; select it and drag the left/right resize handle |
@@ -111,7 +127,7 @@ Sequence lifelines offer connection points at the message rows. Drag between lif
 
 Common labels, relationships, nested groups, and selected styles are supported. Full styling, arbitrary preprocessing, custom sprites, and external includes are not evaluated. Known C4 and ArchiMate macros are interpreted locally. Diagram layout and appearance use the native editor.
 
-Desktop and remote VS Code hosts are supported. A browser extension bundle for **vscode.dev** is not currently provided. Image and PDF export are not currently offered.
+Desktop and remote VS Code hosts are supported. A browser extension bundle for **vscode.dev** is not currently provided. Diagrams export as SVG and PNG; PDF export is not offered. Exported SVGs embed HTML and open in web browsers, so use PNG for tools such as Inkscape or office suites.
 
 See the [native editing reference](docs/native-editing.md) for the scope of each family and the [layout file format](docs/layout-file-format.md) for saved positions. The [bundled examples](examples/all-native.puml) include all 33 starter diagrams.
 

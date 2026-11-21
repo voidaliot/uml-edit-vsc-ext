@@ -43,7 +43,38 @@ export function detectDiagramKind(source: string, marker = 'uml'): DiagramKind {
   return 'class';
 }
 
-export function parseDocument(source: string): ParsedDocument {
+/** The UML families that share the @startuml marker and are told apart by their content. */
+export const umlFamilies: readonly DiagramKind[] = ['class', 'object', 'sequence', 'usecase', 'component', 'deployment', 'state', 'activity', 'entity'];
+
+/**
+ * Families a block names unambiguously. An empty block, or one holding only shared symbols such as
+ * an actor or a database, names none: there the family the author chose in the editor decides.
+ */
+export function kindEvidence(source: string): Set<DiagramKind> {
+  const text = codeLines(source).join('\n'), found = new Set<DiagramKind>();
+  const detected = detectDiagramKind(source);
+  if (!umlFamilies.includes(detected)) return found.add(detected);
+  const signs: [DiagramKind, RegExp][] = [
+    ['activity', /\(\*(?:top)?\)|^\s*(?:start|stop|fork|end\s*fork|endif|endwhile)\s*$|^\s*:[^\n]*;\s*$|^\s*(?:if|while|switch)\s*\(|^\s*repeat\b|^\s*partition\s/im],
+    ['class', /^\s*(?:abstract\s+)?class\s|^\s*(?:enum|annotation)\s/im],
+    ['object', /^\s*object\s/im],
+    ['state', /^\s*state\s|\[\*\]/im],
+    ['sequence', /^\s*participant\s|^\s*(?:activate|deactivate|destroy|autonumber|return)\b|^\s*(?:alt|opt|loop|par|critical)\b|^\s*==.*==\s*$|^\s*note\s+over\s/im],
+    ['usecase', /^\s*usecase\s|(?:^|[->]\s*)\([^\n)]+\)(?:\s|$)|^\s*:[^:;\n]+:(?:\s|$)/im],
+    ['component', /^\s*component\s|^\s*\[[^*\]\n]+\](?:\s|$)/im],
+    ['deployment', /^\s*(?:node|artifact|cloud|storage|stack|agent)\s/im],
+    ['entity', /^\s*entity\s[^\n]*\{|[|}][|o]--|--[|o][|{]/im],
+  ];
+  for (const [kind, pattern] of signs) if (pattern.test(text)) found.add(kind);
+  return found;
+}
+
+export interface ParseOptions {
+  /** Per diagram id: the family chosen in the editor, used only while the source does not contradict it. */
+  kinds?: Record<string, DiagramKind | undefined>;
+}
+
+export function parseDocument(source: string, options: ParseOptions = {}): ParsedDocument {
   const original = source.split(/\r?\n/);
   const code = codeLines(source);
   const eol = source.includes('\r\n') ? '\r\n' : '\n';
@@ -59,7 +90,10 @@ export function parseDocument(source: string): ParsedDocument {
     const closed = endLine < code.length && new RegExp(`^\\s*@end${marker}\\b`, 'i').test(code[endLine]);
     if (!closed) endLine = Math.max(startLine, endLine - 1);
     const blockSource = original.slice(startLine, endLine + 1).join(eol);
-    const kind = detectDiagramKind(blockSource, marker);
+    const detected = detectDiagramKind(blockSource, marker), chosen = options.kinds?.[`diagram-${diagrams.length + 1}`];
+    const evidence = marker === 'uml' && umlFamilies.includes(detected) ? kindEvidence(blockSource) : undefined;
+    // SDL is activity syntax with stereotyped steps, so plain activity statements do not contradict it.
+    const kind = evidence && chosen && (umlFamilies.includes(chosen) || chosen === 'sdl') && [...evidence].every(found => found === chosen || chosen === 'sdl' && found === 'activity') ? chosen : detected;
     const titleLine = code.slice(startLine + 1, endLine).find(text => /^\s*title(?:\s+|:)\s*\S/i.test(text));
     const block: DiagramBlock = {
       id: `diagram-${diagrams.length + 1}`, startLine, endLine, kind, source: blockSource,
@@ -79,7 +113,7 @@ export function parseDocument(source: string): ParsedDocument {
       const titleIndex = code.findIndex((text, index) => index > startLine && index < endLine && text === titleLine);
       block.elements.push({ id: '__diagram_title', kind: 'label', name: block.title, members: [], startLine: titleIndex, endLine: titleIndex, meta: { standaloneTitle: true, editable: false, width: Math.max(190, block.title.replace(/<[^>]*>/g, '').length * 15 + 30), height: 64 } });
     }
-    block.meta = { ...block.meta, lineType: sourceLineType(block) };
+    block.meta = { ...block.meta, lineType: sourceLineType(block), ...(evidence && !evidence.size ? { openKind: true } : {}) };
     if (!closed) block.graphical = false;
     diagrams.push(block);
     line = endLine;

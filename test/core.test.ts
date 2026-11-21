@@ -199,11 +199,18 @@ describe('narrow graphical source edits', () => {
     expect(updated).toContain("class A { ' keep\n  +name: String\n}");
     expect(parseDocument(updated).diagrams[0].elements[0].members).toEqual(['+name: String']);
   });
-  it('adds safe escaped names and stable unique aliases', () => {
+  it('adds safe escaped names and readable unique aliases', () => {
     const source = uml('class "One" as class_1');
     const updated = applyDiagramEdit(source, 'diagram-1', { type: 'addElement', kind: 'class', name: 'The "second" item' });
-    expect(updated).toContain('class "The \\"second\\" item" as class_2');
-    expect(parseDocument(updated).diagrams[0].elements.at(-1)?.id).toBe('class_2');
+    expect(updated).toContain('class "The \\"second\\" item" as TheSecondItem');
+    expect(parseDocument(updated).diagrams[0].elements.at(-1)?.id).toBe('TheSecondItem');
+    // A plain identifier needs no alias; a repeated or reserved one must not collide.
+    const plain = applyDiagramEdit(updated, 'diagram-1', { type: 'addElement', kind: 'class', name: 'Invoice' });
+    expect(plain).toContain('class Invoice {');
+    expect(applyDiagramEdit(plain, 'diagram-1', { type: 'addElement', kind: 'class', name: 'Invoice' })).toContain('class "Invoice" as Invoice2 {');
+    expect(applyDiagramEdit(plain, 'diagram-1', { type: 'addElement', kind: 'class', name: 'class' })).toContain('class "class" as class_2 {');
+    expect(applyDiagramEdit(plain, 'diagram-1', { type: 'addElement', kind: 'class', name: '42 things' })).toContain('class "42 things" as class_2 {');
+    expect(applyDiagramEdit(plain, 'diagram-1', { type: 'addElement', kind: 'note', name: 'Remember this' })).toContain('note "Remember this" as note_1');
   });
   it('places new sequence participants before the first message', () => {
     const updated = applyDiagramEdit(uml('A -> B : request'), 'diagram-1', { type: 'addElement', kind: 'participant', name: 'Worker' });
@@ -211,11 +218,11 @@ describe('narrow graphical source edits', () => {
   });
   it('uses diagram-specific declarations for entity participants and component interfaces', () => {
     const sequence = applyDiagramEdit(uml('A -> B : request'), 'diagram-1', { type: 'addElement', kind: 'entity', name: 'Record' });
-    expect(sequence).toContain('entity "Record" as entity_1\n');
-    expect(sequence).not.toContain('entity_1 {');
+    expect(sequence).toContain('entity Record\n');
+    expect(sequence).not.toContain('Record {');
     const component = applyDiagramEdit(uml('component A'), 'diagram-1', { type: 'addElement', kind: 'interface', name: 'API' });
-    expect(component).toContain('interface "API" as interface_1\n');
-    expect(component).not.toContain('interface_1 {');
+    expect(component).toContain('interface API\n');
+    expect(component).not.toContain('API {');
   });
   it('retains cardinalities and inline comments when editing relationships', () => {
     const source = uml("class A\nclass B\nA \"1\" *-- \"many\" B : old ' keep");
@@ -297,9 +304,12 @@ describe('templates and deterministic layout', () => {
   it('only offers palette operations that remain natively editable', () => {
     for (const template of nativeTemplates) {
       for (const kind of template.palette) {
+        // The sample activity already has its single start symbol.
+        if (kind === 'start') { expect(() => applyDiagramEdit(template.source, 'diagram-1', { type: 'addElement', kind, name: kind })).toThrow(/already has a start/); continue; }
         const source = applyDiagramEdit(template.source, 'diagram-1', { type: 'addElement', kind, name: 'AddedElement' });
         const block = parseDocument(source).diagrams[0];
         expect(block.graphical, `${template.kind}/${kind}: ${block.warnings.join('; ')}`).toBe(true);
+        if (kind === 'stop') { expect(block.elements.filter(element => element.kind === 'end').length).toBe(2); continue; }
         expect(block.elements.some(element => element.name.includes('AddedElement') || element.members.some(member => member.includes('AddedElement'))) || kind === 'salt-separator' && block.elements.some(element => element.kind === kind), `${template.kind}/${kind}`).toBe(true);
       }
     }

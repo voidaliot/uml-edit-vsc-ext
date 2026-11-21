@@ -53,7 +53,7 @@ export function layoutSequence(block: DiagramBlock): Record<string, Point> {
     const side = String(note.meta?.side ?? 'over');
     const width = Math.max(textWidth(note.name, 120, Infinity), side === 'over' && ids.length > 1 ? centers[last] - centers[first] + 60 : 0);
     const x = side.startsWith('left') ? (centers[first] ?? 0) - width - 14 : side.startsWith('right') ? (centers[last] ?? 0) + 14 : ((centers[first] ?? 0) + (centers[last] ?? 0) - width) / 2;
-    const lines = note.name.replace(/\\n/g, '\n').split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.replace(/<[^>]*>/g, '').length * 6 / (width - 24))), 0);
+    const lines = note.name.replace(/\\n/g, '\n').split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.replace(/<[^>]*>/g, '').length * 6.6 / (width - 28))), 0);
     note.meta = { ...note.meta, width, height: Math.max(43, 24 + lines * 17) };
     points[note.id] = { x, y: 137 + Number(note.meta.row ?? 0) * 52 };
     left = Math.min(left, x); right = Math.max(right, x + width);
@@ -76,13 +76,15 @@ export function layoutSequence(block: DiagramBlock): Record<string, Point> {
       element.meta = { ...element.meta, width: 20, height: 20 };
     } else {
       points[element.id] = { x: 60, y };
-      element.meta = { ...element.meta, width: sceneWidth, ...(element.kind === 'sequence-divider' ? { height: 28 } : {}), ...(element.kind === 'sequence-fragment' ? { height: Math.max(90, (Number(element.meta?.endRow ?? row + 1) - row + 1) * 52) } : {}) };
+      element.meta = { ...element.meta, width: sceneWidth, ...(element.kind === 'sequence-divider' ? { height: 28 } : {}), ...(element.kind === 'sequence-fragment' ? { height: Math.max(90, (Number(element.meta?.endRow ?? row + 1) - row + 1) * 52 - 14) } : {}) };
     }
   }
   const activationBottom = Math.max(0, ...participants.flatMap(element => {
     const activations = element.meta?.activations as { start: number; end: number }[] | undefined;
     return (activations ?? []).map(bar => 78 + bar.start * 52 + Math.max(22, (bar.end - bar.start) * 52));
   }));
-  block.meta = { ...block.meta, sequenceHeight: Math.max(160, 100 + Number(block.meta?.sequenceRows ?? block.relations.length) * 52, activationBottom + 46), sequenceWidth: sceneWidth };
+  // Frames and notes in the last rows end above the participant footers, not on them.
+  const decorationBottom = Math.max(0, ...block.elements.filter(element => ['sequence-note', 'sequence-fragment'].includes(element.kind) && points[element.id]).map(element => points[element.id].y + Number(element.meta?.height ?? 0) - 70 + 76));
+  block.meta = { ...block.meta, sequenceHeight: Math.max(160, 100 + Number(block.meta?.sequenceRows ?? block.relations.length) * 52, activationBottom + 46, decorationBottom), sequenceWidth: sceneWidth };
   return points;
 }

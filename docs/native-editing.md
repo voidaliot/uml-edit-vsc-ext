@@ -4,13 +4,13 @@ For installation, screenshots, and a quick start, see the [README](../README.md)
 
 Native, editable UML diagrams built with React Flow and synchronized with PlantUML text files. The extension is independently implemented under MIT. It uses no PlantUML renderer, Java runtime, generated diagram images, or remote rendering service.
 
-**Status: 0.5.0 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
+**Status: 0.7.0 preview. All 33 diagram families in the gallery have native editors.** Each family supports the constructs described below; this is not complete compatibility with every PlantUML language feature. Unsupported constructs keep their source and display a diagnostic.
 
 ## Use in VS Code
 
 1. Install the VSIX with **Extensions → Install from VSIX…**.
 2. Open a `.puml`, `.plantuml`, `.pu`, or `.iuml` file, or run **Aliot UML: New Diagram**.
-3. Double-click a name or member compartment to edit it. Right-click the canvas to create elements. Drag handles to connect supported elements.
+3. Double-click a name or member compartment to edit it. Add elements from the outline palette or by right-clicking the canvas. Drag handles to connect supported elements. Select with a click, Shift/Ctrl-click, a marquee or Ctrl/Cmd+A, and press Delete to remove the selection.
 4. Use the source editor to edit PlantUML inside the canvas. **Source file** also opens the text document alongside the diagram. Text edits update the diagram immediately; diagram edits use VS Code's dirty-state handling and save with Ctrl/Cmd+S.
 5. Move elements freely. Manual placements are saved automatically in a layout file next to the diagram.
 
@@ -20,7 +20,7 @@ The single toolbar contains diagram selection and creation, Select/Hand tools, a
 
 The PlantUML file stays plain PlantUML: other tools, teammates without the extension, and existing projects see exactly the source you wrote. When you move or resize an element, its position goes to a small companion file named after the diagram, for example `order.puml.layout.json`. The file is only created once something is placed manually, and is removed again when **Re-layout** clears every placement. Delete it, ignore it, or leave it out of version control and the diagram falls back to automatic layout. The format is described in [`docs/layout-file-format.md`](layout-file-format.md), with an example in `examples/order-model.puml.layout.json`.
 
-Placement and source edits share one undo/redo history in the diagram: the toolbar buttons and Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z step back through moves, resizes, renames and source edits in the order they were made, including edits typed in a text editor beside the diagram. Undo from a text editor or the **Edit** menu undoes source only. Pan, zoom and fit are personal view state: they are kept in the VS Code workspace and never written to the layout file.
+A placement that completes a source edit, such as an element added at a point, a paste beside hand-placed originals or a move into a package, is one step together with that edit. Placement and source edits share one undo/redo history in the diagram: the toolbar buttons and Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z step back through moves, resizes, renames and source edits in the order they were made, including edits typed in a text editor beside the diagram. Undo from a text editor or the **Edit** menu undoes source only. Pan, zoom and fit are personal view state: they are kept in the VS Code workspace and never written to the layout file.
 
 Renaming, moving or deleting a diagram in VS Code does the same to its layout file. Outside VS Code (a terminal, git), move both files together. When the layout file changes on disk, for example after a checkout, open diagrams reload it and start a new placement history. An invalid layout file is reported and left untouched until the next manual placement replaces it. Untitled diagrams keep their placement in memory until they are saved.
 
@@ -64,17 +64,55 @@ The file `examples/all-native.puml` contains all **33** original starter diagram
 
 Basic formatted labels and selected stock icon names render natively. Simple local procedures with literal arguments can project declarations and edit their invocation parameters. Arbitrary preprocessor evaluation, loops/conditions inside procedures, custom sprites, external includes and remote resources are not executed. Known C4/ArchiMate includes select local native notation. Source styles are preserved, but full PlantUML styling is not reproduced. Engine utilities such as `listopeniconic`, `listsprite` and `stdlib` remain source-only.
 
+## Starting from an empty diagram
+
+**New diagram** opens the gallery with two ways to start: **Example** inserts the family's sample, **Blank** inserts only its `@start…` / `@end…` markers (plus the library include for C4 and ArchiMate). Families that are edited inside their sample, such as JSON, YAML, Salt or charts, always start from their example.
+
+The nine UML families share `@startuml` and are told apart by content, so an empty block does not say what it is. The canvas asks, and that choice selects the palette, the notation and the syntax of what you add. It applies only while the source leaves the question open: once the block contains something that belongs to one family (a `participant`, a `state`, an activity action, a class), the source decides, exactly as it does for PlantUML. While it is open, **Diagram type** in the outline changes it. The choice is editor state; it is not written to the `.puml` file.
+
+New elements use their name as the alias where it is an identifier (`class Invoice`), and a readable alias derived from it otherwise (`class "Line item" as LineItem`).
+
+State machines add their initial and final symbols to the selected state with **initial** / **final** in the palette, or from the state's context menu. Activity diagrams add **start** and **stop** from the palette.
+
+## Copying, connecting and reshaping
+
+Copy, cut, paste and duplicate (Ctrl/Cmd+C, X, V, D) work on the selection in class, object, use case, component, deployment, state and entity diagrams. A selection is its elements, everything inside selected containers, and the relationships whose two ends are both selected. A copy keeps its display name and gets a free alias (`class Order` becomes `class "Order" as Order2`); a paste is one source edit at the end of the diagram. The clipboard belongs to one editor tab and pastes into any diagram of the same type in that file. Families whose meaning depends on source order, such as sequence and activity diagrams, do not offer it.
+
+Dragging a connection onto empty canvas offers the element kinds that can be added and connected in one step, then asks for a name. Releasing on an element's body connects to it. A selected relationship shows a grip at each end: drag one to another element to re-attach that end. Only the endpoint token changes in the source, and the edit is refused when it would create or drop an element as a side effect. Structure-derived and macro-based families (activity, C4, ArchiMate, DOT) do not offer re-attaching.
+
+In the freely arranged families a selected relationship also shows a grip in the middle of each segment. Drag it to add a bend, drag a bend to move it, double-click a bend to remove it. Bends are placement, not source: they are saved in the layout file, undone like moves, and removed by **Re-layout**. Bending a relationship pins both of its ends where they are shown. Bends move along when both ends are dragged together and stay put when only one end moves. When the relationships between two elements change (one is deleted, re-attached, or an end is renamed), the bends between those two elements are dropped instead of passing to a neighbouring relationship. This follows edits made on the canvas; after editing parallel relationships in the text, check their bends or use **Re-layout**.
+
+**Properties…** in an element's context menu sets or clears its stereotype and background colour on the declaration line.
+
+## Moving between containers
+
+Membership is where a declaration is written. Dropping an element on a different package, rectangle, node or composite state writes its declaration, with its body and the comments above it, into that container. While you drag, the target is outlined and a hint says what releasing will do. A container still follows a child that is dragged inside it; once the child is clearly outside, the container lets go and releasing moves the declaration to the top level, above its former container so that nothing refers to a later declaration. **Move to…** in the context menu lists the same targets. PlantUML creates an element where it is first mentioned, so a move that would write the declaration below a relationship or member line naming it is refused: move that line below the container first, or edit the source. Elements that exist only as the end of a relationship, namespaces, and states inside concurrent regions cannot be moved this way.
+
+## Export
+
+**Export image** in the toolbar, and the commands **Aliot UML: Export Diagram as SVG…** / **PNG…**, save the whole current diagram at natural size with a margin, without selection or editing handles, on the theme background, a fixed light background, or transparent. PNG is drawn at twice the size. The SVG references nothing outside itself; it holds HTML in a `foreignObject`, which web browsers display and most vector editors and office suites do not, so use PNG there. Fonts are not embedded: a reader without the editor's font sees their system's sans-serif.
+
+## Deleting
+
+Delete removes everything selected in one edit, with the relationships and member statements that referred to it. A container goes with its contents. In activity and SDL diagrams a decision, loop or fork is removed with its branches, from any of its symbols; one `elseif` alternative is removed alone. Flow lines there follow the structure and go with the elements they join. Deleting a sequence frame dissolves the frame and keeps its messages. Elements the editor only generates, such as a schedule axis, are skipped.
+
 ## Navigation and placement
 
 | Action | Gesture |
 | --- | --- |
 | Rename | Double-click the name, or select and press F2 |
 | Edit members or diagram-specific properties | Double-click the compartment or shape content |
-| Add element | Right-click empty canvas, or use the outline palette |
+| Add element | Use the outline palette, or right-click empty canvas to place it there |
+| Select several | Shift/Ctrl/Cmd-click, drag a marquee, or Ctrl/Cmd+A; Escape clears |
+| Delete | Delete or Backspace, the toolbar button, or the context menu; a whole selection is one undo step |
+| Align / distribute | Select two or more elements; use the arrange buttons that appear in the toolbar |
+| Snap | Dragged elements snap to others' edges and centres; hold Alt to place freely once, or switch **Snap while dragging** off in the toolbar |
+| Find | Ctrl/Cmd+F filters the outline; Enter selects the first match |
+| Shortcut reference | `?` or the keyboard button in the toolbar |
 | Add child | Right-click a container, tree node or data collection |
 | Connect elements | Drag between connection handles |
 | Edit relationship | Double-click connector or label |
-| Move | Drag an element; sequence participants move horizontally |
+| Move | Drag an element or a selection; sequence participants move horizontally |
 | Reorder a sequence message | Drag its line or label vertically, or use Up/Down on its focused label |
 | Move / resize a sequence divider | Drag its label; select it and drag the left/right resize handle |
 | Select-mode pan | Wheel, Shift+wheel horizontally, or middle-button drag |
@@ -82,13 +120,13 @@ Basic formatted labels and selected stock icon names render natively. Simple loc
 | Hand tool | H; drag pans, wheel zooms |
 | Temporary Hand / Select / Fit | Hold Space / V / F |
 
-Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved in the diagram's layout file.
+Connections in structured activities, trees, networks and other derived diagrams follow source structure. The editor disables arbitrary connections for these families. Containers move with their children. Gantt and chronology dragging changes source dates. Other manual positions are saved in the diagram's layout file. Only what you move is pinned; everything else stays with the automatic layout and is kept clear of the pinned elements. A container is always drawn around its contents. In a diagram that is mostly arranged by hand, an element added from the palette takes a free place beside the arrangement.
 
 Sequence connections use row-specific lifeline handles and insert source at the chosen row. Message and divider vertical drags reorder source events, retaining directly attached activation directives. Else dividers remain inside their fragment. Divider horizontal positions and widths are saved in the layout file and take part in the shared undo/redo history.
 
 Activity layout follows the control flow: centered action chains, balanced branches and merges, parallel fork lanes and outer loop paths. Node dimensions follow their labels. Pan, zoom and fit preserve automatic layout; only deliberate placement and dragging create manual overrides. **Re-layout** clears those overrides and arranges the current source again, including files positioned with an older extension version.
 
-Graph layouts follow source directions, inheritance and relationships inside nested groups. Mind maps honor left/right branches, WBS uses compact branch stacks, and sequence columns adapt to participant names and messages. JSON/YAML objects and arrays use editable tables; Gantt schedules use compact rows on a shared calendar grid.
+Graph layouts follow source directions, inheritance and relationships inside nested groups. A relationship that spans several ranks is routed through its own lane beside the boxes in between, also when it enters or leaves a package; the bends are dropped as soon as one of its ends is moved by hand. Each rank is ordered to minimise crossings before positions are assigned. Cycles are cut at their feedback edge, relationships from outside a container decide which of its children face that side, and independent groups wrap into rows. Mind maps honor left/right branches, WBS uses compact branch stacks, and sequence columns adapt to participant names and messages. JSON/YAML objects and arrays use editable tables; Gantt schedules use compact rows on a shared calendar grid.
 
 Ordinary connectors use straight lines by default. Set `skinparam linetype ortho` for sharp right-angle routes, `polyline` for straight segments, or `spline`/`splines` for curves. Activity branches, loops and schedule dependencies retain their structured tracks, with sharp corners unless curves are requested; sequence messages stay horizontal. Inline dashed, dotted, plain and bold arrow settings are applied. Only directives in the current source are interpreted; included files and arbitrary preprocessing are not evaluated. Existing manual placements remain until **Re-layout** is used.
 

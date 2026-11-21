@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
-import { parseLayoutFile, serializeLayoutFile } from '../src/core/layout-file';
+import { bendKey, parseLayoutFile, serializeLayoutFile } from '../src/core/layout-file';
 // The same file adapter used by the live browser server.
 // @ts-expect-error Development server is deliberately native Node ESM.
 import { openPreviewDocument } from '../scripts/preview-document.mjs';
@@ -121,5 +121,57 @@ describe('live PlantUML file with a layout file', () => {
     expect(created.source).toContain(source.trimEnd());
     expect(created.source.match(/@startuml/g)).toHaveLength(2);
     expect(parseLayoutFile(await readFile(layoutPath, 'utf8'))['diagram-1'].positions).toEqual(positions);
+  });
+
+  it('undoes and redoes a placement together with the source edit it completes', async () => {
+    const { model } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
+    const before = await model.snapshot();
+    const edited = await model.receive({ type: 'edit', version: before.version, diagramId: 'diagram-1', edit: { type: 'addElement', kind: 'class', name: 'Dropped' } });
+    const placed = { ...positions, Dropped: { x: 500, y: 300 } };
+    const linked = await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: positions, layout: { positions: placed } });
+    expect(linked.layouts['diagram-1'].positions).toEqual(placed);
+    // One step back removes the element and its place; one step forward restores both.
+    const undone = await model.receive({ type: 'undo' });
+    expect(undone.source).toBe(before.source);
+    expect(undone.layouts['diagram-1'].positions).toEqual(positions);
+    const redone = await model.receive({ type: 'redo' });
+    expect(redone.source).toBe(edited.source);
+    expect(redone.layouts['diagram-1'].positions).toEqual(placed);
+    // An ordinary move after it is still a step of its own.
+    await model.receive({ type: 'layout', version: redone.version, diagramId: 'diagram-1', basePositions: placed, layout: { positions: { ...placed, A: { x: 1, y: 1 } } } });
+    const stepped = await model.receive({ type: 'undo' });
+    expect(stepped.source).toBe(edited.source);
+    expect(stepped.layouts['diagram-1'].positions).toEqual(placed);
+  });
+
+  it('undoes every placement that completed an edit together with it', async () => {
+    const { model } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
+    const before = await model.snapshot();
+    const edited = await model.receive({ type: 'edit', version: before.version, diagramId: 'diagram-1', edit: { type: 'addElement', kind: 'class', name: 'Dropped' } });
+    const first = { ...positions, Dropped: { x: 500, y: 300 } }, second = { ...first, A: { x: 7, y: 7 } };
+    await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: positions, layout: { positions: first } });
+    await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: first, layout: { positions: second } });
+    const undone = await model.receive({ type: 'undo' });
+    expect(undone.source).toBe(before.source);
+    expect(undone.layouts['diagram-1'].positions).toEqual(positions);
+    const redone = await model.receive({ type: 'redo' });
+    expect(redone.source).toBe(edited.source);
+    expect(redone.layouts['diagram-1'].positions).toEqual(second);
+  });
+
+  it('keeps relationship bends with the placements, in the same history, until Re-layout clears both', async () => {
+    const { model, layoutPath } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
+    const key = bendKey('A', 'B', 0), bends = { [key]: [{ x: 10, y: 20 }] };
+    const bent = await model.receive({ type: 'layout', version: 1, diagramId: 'diagram-1', basePositions: positions, baseBends: {}, layout: { positions, bends } });
+    expect(bent.layouts['diagram-1']).toEqual({ positions, bends });
+    expect(parseLayoutFile(await readFile(layoutPath, 'utf8'))['diagram-1']).toEqual({ positions, bends });
+    // A drag that does not name a bend baseline may carry a stale copy; the bends stay.
+    const moved = await model.receive({ type: 'layout', version: 1, diagramId: 'diagram-1', basePositions: positions, layout: { positions: { ...positions, A: { x: 0, y: 0 } }, bends: {} } });
+    expect(moved.layouts['diagram-1'].bends).toEqual(bends);
+    expect((await model.receive({ type: 'undo' })).layouts['diagram-1']).toEqual({ positions, bends });
+    expect((await model.receive({ type: 'undo' })).layouts['diagram-1']).toEqual({ positions });
+    expect((await model.receive({ type: 'redo' })).layouts['diagram-1']).toEqual({ positions, bends });
+    await model.receive({ type: 'layout', version: 1, diagramId: 'diagram-1', basePositions: positions, baseBends: bends, layout: { positions: {}, bends: {} } });
+    expect(await exists(layoutPath)).toBe(false);
   });
 });

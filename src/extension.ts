@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { homedir } from 'node:os';
 import { parseDocument } from './core/parser';
 import { applyDiagramEdit } from './core/edits';
-import { nativeTemplates } from './core/templates';
+import { starterSource } from './core/templates';
 import { isPlantUmlFile, layoutFileName, parseLayoutFile, serializeLayoutFile, validateSource } from './core/layout-file';
-import type { DiagramKind, DiagramLayout, HostMessage, Layouts, WebviewMessage } from './shared/protocol';
+import type { DiagramKind, DiagramLayout, ExportFormat, HostMessage, Layouts, WebviewMessage } from './shared/protocol';
 import { mergeLayoutPositions, minimalTextChange, requireDocumentVersion, validWebviewMessage } from './host/messages';
 
 export const EDITOR_VIEW_TYPE = 'aliot.umlEditor';
@@ -19,11 +20,12 @@ interface EditorSession {
   showSourceOnReady?: boolean;
 }
 
-type Positions = DiagramLayout['positions'];
 type Viewport = DiagramLayout['viewport'];
+/** What the layout file stores for one diagram: element positions and relationship bends. */
+type Placement = Pick<DiagramLayout, 'positions' | 'bends'>;
 
 /** One placement change. It is undone only while the source still reads as it did when the change was made. */
-interface LayoutStep { diagramId: string; before?: Positions; after?: Positions; sourceText: string }
+interface LayoutStep { diagramId: string; before?: Placement; after?: Placement; sourceText: string; /** Completes the source edit made just before it; the two are undone and redone together. */ linked?: boolean }
 
 interface LayoutState {
   /** The companion layout file; undefined for untitled documents, whose placement stays in memory. */
@@ -57,6 +59,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('aliotUml.newDiagram', () => provider.newDiagram()),
     vscode.commands.registerCommand('aliotUml.openSource', (uri?: vscode.Uri) => provider.openSource(uri ?? vscode.window.activeTextEditor?.document.uri ?? provider.activeUri)),
+    vscode.commands.registerCommand('aliotUml.exportSvg', () => provider.requestExport('svg')),
+    vscode.commands.registerCommand('aliotUml.exportPng', () => provider.requestExport('png')),
   );
 }
 
@@ -68,6 +72,8 @@ export function layoutFileUri(uri: vscode.Uri): vscode.Uri | undefined {
 
 export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscode.Disposable {
   private readonly sessions = new Set<EditorSession>();
+  /** The family picked for a document that was created blank, by document URI. */
+  private readonly blankKinds = new Map<string, DiagramKind>();
   private readonly subscriptions: vscode.Disposable[] = [];
   private readonly editQueues = new Map<string, Promise<void>>();
   private readonly states = new Map<string, LayoutState>();
@@ -139,10 +145,12 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     panel.webview.html = this.html(panel.webview);
   }
 
-  async newDiagram(kind?: DiagramKind): Promise<void> {
-    const template = kind ? nativeTemplates.find(item => item.kind === kind) : undefined;
-    if (kind && !template) throw new Error('That diagram type is not available in the native editor yet.');
-    const document = await vscode.workspace.openTextDocument({ language: 'plantuml', content: template?.source ?? '' });
+  async newDiagram(kind?: DiagramKind, blank = false): Promise<void> {
+    const starter = kind ? starterSource(kind, blank) : undefined;
+    if (kind && !starter) throw new Error('That diagram type is not available in the native editor yet.');
+    const document = await vscode.workspace.openTextDocument({ language: 'plantuml', content: starter ?? '' });
+    // A blank UML block does not say which family it is; the new editor is told.
+    if (kind && blank) this.blankKinds.set(document.uri.toString(), kind);
     await vscode.commands.executeCommand('vscode.openWith', document.uri, EDITOR_VIEW_TYPE);
   }
 
@@ -155,6 +163,25 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
       editor.selection = new vscode.Selection(position, position);
       editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     }
+  }
+
+  /** Only the webview can draw the diagram, so a command asks it for the image it then sends back. */
+  async requestExport(format: ExportFormat): Promise<void> {
+    const session = this.activeSession;
+    if (!session || session.disposed || !session.ready) { void vscode.window.showInformationMessage('Open a diagram in the Aliot UML Editor to export it.'); return; }
+    await this.post(session, { type: 'exportRequest', format });
+  }
+
+  /** Writes an exported image where the user chooses, next to the diagram by default. Nothing is written without that choice. */
+  private async saveExport(document: vscode.TextDocument, message: Extract<WebviewMessage, { type: 'export' }>): Promise<void> {
+    const folder = document.uri.scheme === 'untitled' ? vscode.workspace.workspaceFolders?.[0]?.uri ?? vscode.Uri.file(homedir()) : vscode.Uri.joinPath(document.uri, '..');
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.joinPath(folder, message.name), saveLabel: 'Export', title: `Export diagram as ${message.format.toUpperCase()}`,
+      filters: message.format === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] },
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(target, message.format === 'svg' ? new TextEncoder().encode(message.data) : Buffer.from(message.data, 'base64'));
+    void vscode.window.showInformationMessage(`Exported ${basename(target.path)}.`);
   }
 
   private async handleMessage(session: EditorSession, message: WebviewMessage): Promise<void> {
@@ -173,7 +200,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         await this.enqueueEdit(document, async () => {
           requireDocumentVersion(document.version, message.version);
           const before = document.getText();
-          const after = applyDiagramEdit(before, message.diagramId, message.edit);
+          const after = applyDiagramEdit(before, message.diagramId, message.edit, { kind: message.kind });
           validateSource(after);
           await this.replaceText(document, before, after, document.version);
           // Changed text already broadcasts once through onDidChangeTextDocument.
@@ -187,13 +214,13 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
           if (message.version !== undefined) requireDocumentVersion(document.version, message.version);
           if (!parseDocument(document.getText()).diagrams.some(item => item.id === message.diagramId)) return;
           const state = this.state(document), id = message.diagramId;
-          const current = state.positions[id]?.positions ?? Object.create(null) as Positions;
-          const layout = mergeLayoutPositions({ positions: current }, message.layout, message.basePositions);
+          const current: Placement = state.positions[id] ?? { positions: Object.create(null) };
+          const layout = mergeLayoutPositions(current, message.layout, message.basePositions, message.baseBends);
           if (layout.viewport) state.viewports[id] = { ...layout.viewport }; else delete state.viewports[id];
           this.scheduleViewports(document.uri, state);
-          if (!samePositions(current, layout.positions)) {
-            const step: LayoutStep = { diagramId: id, before: state.positions[id]?.positions, after: copyPositions(layout.positions), sourceText: document.getText() };
-            const positions = withPositions(state.positions, id, step.after);
+          if (!samePlacement(current, layout)) {
+            const step: LayoutStep = { diagramId: id, before: state.positions[id], after: copyPlacement(layout), sourceText: document.getText(), ...(message.linked ? { linked: true } : {}) };
+            const positions = withPlacement(state.positions, id, step.after);
             await this.writeLayoutFile(state, positions);
             state.positions = positions;
             state.undo.push(step);
@@ -205,18 +232,21 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         });
         break;
       case 'create': {
-        const template = nativeTemplates.find(item => item.kind === message.kind);
-        if (!template) throw new Error('That diagram template is not available.');
+        const starter = starterSource(message.kind, message.blank);
+        if (!starter) throw new Error('That diagram template is not available.');
         if (!document.getText().trim()) {
           await this.enqueueEdit(document, async () => {
             const before = document.getText();
-            if (before.trim()) { await this.newDiagram(template.kind); return; }
-            await this.replaceText(document, before, template.source, document.version);
+            if (before.trim()) { await this.newDiagram(message.kind, message.blank); return; }
+            if (message.blank) this.blankKinds.set(document.uri.toString(), message.kind);
+            await this.replaceText(document, before, starter, document.version);
           });
-        } else await this.newDiagram(template.kind);
+        } else await this.newDiagram(message.kind, message.blank);
         break;
       }
       case 'openSource': await this.openSource(document.uri, message.line); break;
+      // Reported here, not to the canvas: an error message there would also fail whatever edit is applying.
+      case 'export': try { await this.saveExport(document, message); } catch (error) { void vscode.window.showErrorMessage(`The image could not be saved. ${errorMessage(error)}`); } break;
       case 'undo':
       case 'redo': await this.history(session, message.type); break;
     }
@@ -232,24 +262,39 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     await this.enqueueEdit(document, async () => {
       const stack = direction === 'undo' ? state.undo : state.redo;
       const step = stack.at(-1);
-      if (step && step.sourceText === document.getText()) { await this.applyStep(document, state, direction); return; }
+      const native = async (): Promise<boolean> => {
+        if (!session.panel.active) return false;
+        const version = document.version;
+        state.nativeHistory++;
+        try {
+          await vscode.commands.executeCommand(direction);
+          const deadline = Date.now() + 250;
+          while (document.version === version && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+        } finally { state.nativeHistory--; }
+        return document.version !== version;
+      };
+      if (step && step.sourceText === document.getText()) {
+        // Placements that completed a source edit (there can be several, such as a renamed element's
+        // position and the bends it no longer has) go back together, then the edit itself.
+        if (direction === 'undo' && step.linked) {
+          while (state.undo.at(-1)?.linked && state.undo.at(-1)!.sourceText === document.getText()) await this.applyStep(document, state, direction);
+          await native();
+        } else await this.applyStep(document, state, direction);
+        return;
+      }
       if (!session.panel.active) return;
-      const version = document.version;
-      state.nativeHistory++;
-      try {
-        await vscode.commands.executeCommand(direction);
-        const deadline = Date.now() + 250;
-        while (document.version === version && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-      } finally { state.nativeHistory--; }
+      const changed = await native();
       // The native stack had nothing left: the placement step is the next one after all.
-      if (document.version === version && step) await this.applyStep(document, state, direction);
+      if (!changed && step) await this.applyStep(document, state, direction);
+      // Redoing a source edit also redoes every placement that completed it.
+      while (changed && direction === 'redo' && state.redo.at(-1)?.linked && state.redo.at(-1)!.sourceText === document.getText()) await this.applyStep(document, state, direction);
     });
   }
 
   private async applyStep(document: vscode.TextDocument, state: LayoutState, direction: 'undo' | 'redo'): Promise<void> {
     const stack = direction === 'undo' ? state.undo : state.redo;
     const step = stack.at(-1)!;
-    const positions = withPositions(state.positions, step.diagramId, direction === 'undo' ? step.before : step.after);
+    const positions = withPlacement(state.positions, step.diagramId, direction === 'undo' ? step.before : step.after);
     await this.writeLayoutFile(state, positions);
     state.positions = positions;
     stack.pop();
@@ -277,6 +322,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
   }
 
   private releaseState(key: string): void {
+    this.blankKinds.delete(key);
     this.flushViewports(key);
     this.states.get(key)?.watcher?.dispose();
     this.states.delete(key);
@@ -376,8 +422,8 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
 
   private editorLayouts(state: LayoutState): Layouts {
     const layouts: Layouts = Object.create(null);
-    for (const [id, layout] of Object.entries(state.positions)) layouts[id] = { positions: layout.positions };
-    for (const [id, viewport] of Object.entries(state.viewports)) if (viewport) layouts[id] = { positions: layouts[id]?.positions ?? Object.create(null), viewport };
+    for (const [id, layout] of Object.entries(state.positions)) layouts[id] = layout.bends ? { positions: layout.positions, bends: layout.bends } : { positions: layout.positions };
+    for (const [id, viewport] of Object.entries(state.viewports)) if (viewport) layouts[id] = layouts[id] ? { ...layouts[id], viewport } : { positions: Object.create(null), viewport };
     return layouts;
   }
 
@@ -393,6 +439,7 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         type: 'document', source, version: session.document.version,
         fileName: basename(session.document.uri.path) || 'Untitled PlantUML',
         layouts: this.editorLayouts(this.state(session.document)), trusted: vscode.workspace.isTrusted,
+        ...(this.blankKinds.has(session.document.uri.toString()) ? { kinds: { 'diagram-1': this.blankKinds.get(session.document.uri.toString())! } } : {}),
       });
     } catch (error) { void this.post(session, { type: 'error', message: errorMessage(error) }); }
   }
@@ -405,26 +452,30 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
     const nonce = randomBytes(18).toString('base64');
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview.js'));
     const stylesheet = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview.css'));
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src 'none';"><link rel="stylesheet" href="${stylesheet}"><title>Aliot UML Editor</title></head><body><div id="root"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}'; connect-src 'none';"><link rel="stylesheet" href="${stylesheet}"><title>Aliot UML Editor</title></head><body><div id="root"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
   }
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
-function copyPositions(positions: Positions): Positions {
-  const result: Positions = Object.create(null);
-  for (const [id, point] of Object.entries(positions)) result[id] = { ...point };
-  return result;
+function copyPlacement(layout: Placement): Placement {
+  const positions: Placement['positions'] = Object.create(null);
+  for (const [id, point] of Object.entries(layout.positions)) positions[id] = { ...point };
+  if (!layout.bends) return { positions };
+  const bends: NonNullable<Placement['bends']> = Object.create(null);
+  for (const [key, points] of Object.entries(layout.bends)) bends[key] = points.map(point => ({ ...point }));
+  return { positions, bends };
 }
 
-function withPositions(current: Layouts, diagramId: string, positions: Positions | undefined): Layouts {
+function withPlacement(current: Layouts, diagramId: string, placement: Placement | undefined): Layouts {
   const result: Layouts = Object.assign(Object.create(null), current);
-  if (positions && Object.keys(positions).length) result[diagramId] = { positions };
+  if (placement && (Object.keys(placement.positions).length || Object.keys(placement.bends ?? {}).length)) result[diagramId] = placement;
   else delete result[diagramId];
   return result;
 }
 
-function samePositions(left: Positions, right: Positions): boolean {
-  const keys = Object.keys(left);
-  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && (['x', 'y', 'width', 'height'] as const).every(field => left[key][field] === right[key][field]));
+function samePlacement(left: Placement, right: Placement): boolean {
+  const keys = Object.keys(left.positions);
+  const positions = keys.length === Object.keys(right.positions).length && keys.every(key => Object.hasOwn(right.positions, key) && (['x', 'y', 'width', 'height'] as const).every(field => left.positions[key][field] === right.positions[key][field]));
+  return positions && JSON.stringify(left.bends ?? {}) === JSON.stringify(right.bends ?? {});
 }
