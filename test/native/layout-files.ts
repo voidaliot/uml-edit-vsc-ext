@@ -102,10 +102,14 @@ export async function verifyLayoutFiles(extensionUri: vscode.Uri, workspace: vsc
     const edited = document.getText(), dropped = { x: 500, y: 300 };
     first.send({ type: 'layout', linked: true, version: document.version, diagramId: 'diagram-1', basePositions: { A, B }, layout: { positions: { A, B: dropped } } });
     await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B: dropped }), 'The linked placement must be written.');
+    // A second placement completing the same edit belongs to the same step.
+    const nudged = { x: 120, y: 95 };
+    first.send({ type: 'layout', linked: true, version: document.version, diagramId: 'diagram-1', basePositions: { A, B: dropped }, layout: { positions: { A: nudged, B: dropped } } });
+    await eventually(async () => JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A: nudged, B: dropped }), 'The second linked placement must be written.');
     first.send({ type: 'undo' });
-    await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'One undo must take back a linked placement together with its edit.');
+    await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'One undo must take back every linked placement together with its edit.');
     first.send({ type: 'redo' });
-    await eventually(async () => document.getText() === edited && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B: dropped }), 'One redo must replay the edit together with its linked placement.');
+    await eventually(async () => document.getText() === edited && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A: nudged, B: dropped }), 'One redo must replay the edit together with its linked placements.');
     first.send({ type: 'undo' });
     await eventually(async () => document.getText() === renamed && JSON.stringify(await placement(layoutUri)) === JSON.stringify({ A, B }), 'The pair is undone again for the steps that follow.');
     console.log('PASS a placement linked to a source edit is undone and redone with it');

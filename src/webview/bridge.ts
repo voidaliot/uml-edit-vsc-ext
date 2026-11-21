@@ -201,15 +201,15 @@ export function send(message: WebviewMessage): void {
         }
         case 'undo': {
           const step = (linked: boolean) => { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
-          const linked = undo.at(-1)?.linked === true;
-          if (undo.length) step(linked);
-          if (linked && undo.length) step(false);
+          // Every placement that completed the source edit, then the edit.
+          while (undo.at(-1)?.linked) step(true);
+          if (undo.length) step(false);
           break;
         }
         case 'redo': {
           const step = (linked: boolean) => { const snapshot = redo.pop()!; undo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
           if (redo.length) step(false);
-          if (redo.at(-1)?.linked) step(true);
+          while (redo.at(-1)?.linked) step(true);
           break;
         }
         case 'openSource': break;

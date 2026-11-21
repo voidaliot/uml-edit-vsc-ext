@@ -120,7 +120,11 @@ export function App() {
   const freeform = Boolean(diagram && freeformKinds.has(diagram.kind));
   const selectedNodes = useMemo(() => nodes.filter(node => node.selected).map(node => node.id), [nodes]);
   const selectedEdges = useMemo(() => edges.filter(edge => edge.selected).map(edge => edge.id), [edges]);
-  const selectionCount = selectedNodes.length + selectedEdges.length || (selectedId ? 1 : 0);
+  // React Flow's selection decides what an action applies to. The remembered id only stands in when
+  // nothing is selected on the canvas (an outline pick before it renders), or it would bring back an
+  // element just deselected with Shift-click.
+  const acting = useMemo(() => selectedNodes.length + selectedEdges.length ? [...selectedNodes, ...selectedEdges] : selectedId ? [selectedId] : [], [selectedNodes, selectedEdges, selectedId]);
+  const selectionCount = acting.length;
 
   useEffect(() => {
     const unsubscribe = subscribe(message => {
@@ -432,7 +436,7 @@ export function App() {
   /** Everything selected goes in one edit, so one undo brings it all back. */
   const deleteSelection = useCallback(() => {
     if (!diagram || !native) return;
-    const picked = new Set([...selectedNodes, ...selectedEdges, ...(selectedId ? [selectedId] : [])]);
+    const picked = new Set(acting);
     const elementIds = diagram.elements.filter(element => picked.has(element.id) && element.meta?.editable !== false).map(element => element.id);
     const relationIds = derivedRelations ? [] : diagram.relations.filter(relation => picked.has(relation.id)).map(relation => relation.id);
     setMenu(undefined);
@@ -442,7 +446,7 @@ export function App() {
     }
     void commit(elementIds.length === 1 && !relationIds.length ? { type: 'deleteElement', elementId: elementIds[0] } : !elementIds.length && relationIds.length === 1 ? { type: 'deleteRelation', relationId: relationIds[0] } : { type: 'deleteElements', elementIds, relationIds });
     select([]);
-  }, [diagram, selectedId, selectedNodes, selectedEdges, native, derivedRelations, commit, select]);
+  }, [diagram, acting, native, derivedRelations, commit, select]);
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -472,7 +476,7 @@ export function App() {
   const takeClip = (): Clip | undefined => {
     if (!diagram || !documentState) return undefined;
     if (clipboardProblem) { setError(clipboardProblem); return undefined; }
-    const ids = [...new Set([...selectedNodes, ...(selectedId ? [selectedId] : [])])];
+    const ids = acting.filter(id => !selectedEdges.includes(id) && diagram.elements.some(element => element.id === id));
     if (!ids.length) return undefined;
     try { return captureClip(copyFragment(documentState.source, diagram, ids), flow.getNodes().filter(node => node.data.diagramId === diagram.id), positions.current[diagram.id] ?? {}); }
     catch (problem) { setError(problem instanceof Error ? problem.message : String(problem)); return undefined; }
@@ -577,7 +581,7 @@ export function App() {
     setMenu(undefined);
     if (diagram.kind === 'state' && (kind === 'initial' || kind === 'final')) {
       // The initial and final symbols only exist as one end of a transition.
-      const state = diagram.elements.find(element => element.id === (parentId ?? selectedId) && element.kind === 'state');
+      const state = diagram.elements.find(element => element.id === (parentId ?? (acting.length === 1 ? acting[0] : undefined)) && element.kind === 'state');
       if (!state) { setError(`Select a state first, then add its ${kind} marker.`); return; }
       void commit({ type: 'addRelation', source: kind === 'initial' ? '[*]' : state.id, target: kind === 'initial' ? state.id : '[*]', arrow: '-->', label: '' });
       return;
@@ -950,7 +954,7 @@ export function App() {
           {menu.element && native && selectionCount <= 1 && menu.element.meta?.editable !== false && <button role="menuitem" onClick={() => requestRename(menu.element!.id)}>Rename <kbd>F2</kbd></button>}
           {menu.relation && selectionCount <= 1 && <button role="menuitem" onClick={() => editRelation(menu.relation!)}>Edit relationship</button>}
           {menu.element && native && selectionCount <= 1 && diagram?.kind === 'state' && menu.element.kind === 'state' && <><button role="menuitem" onClick={() => beginElement('initial', undefined, menu.element!.id)}>Mark as initial state</button><button role="menuitem" onClick={() => beginElement('final', undefined, menu.element!.id)}>Add final transition</button></>}
-          {native && !clipboardProblem && selectedNodes.length + (selectedId && !selectedEdges.includes(selectedId) ? 1 : 0) > 0 && (menu.element || !menu.relation) && <><button role="menuitem" onClick={() => clipboardKeys.current.actions.cut()}><Scissors size={13} /> Cut <kbd>{keyLabel('Mod+X')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.copy()}><Copy size={13} /> Copy <kbd>{keyLabel('Mod+C')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.duplicate()}><CopyPlus size={13} /> Duplicate <kbd>{keyLabel('Mod+D')}</kbd></button></>}
+          {native && !clipboardProblem && acting.some(id => !selectedEdges.includes(id) && Boolean(diagram?.elements.some(element => element.id === id))) && (menu.element || !menu.relation) && <><button role="menuitem" onClick={() => clipboardKeys.current.actions.cut()}><Scissors size={13} /> Cut <kbd>{keyLabel('Mod+X')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.copy()}><Copy size={13} /> Copy <kbd>{keyLabel('Mod+C')}</kbd></button><button role="menuitem" onClick={() => clipboardKeys.current.actions.duplicate()}><CopyPlus size={13} /> Duplicate <kbd>{keyLabel('Mod+D')}</kbd></button></>}
           {native && !clipboardProblem && clip.current && !menu.relation && <button role="menuitem" onClick={() => void pasteClip(clip.current)}><ClipboardPaste size={13} /> Paste <kbd>{keyLabel('Mod+V')}</kbd></button>}
           {menu.element && native && selectionCount <= 1 && diagram && !declarationBlocker(diagram, 'Properties') && menu.element.meta?.editable !== false && !menu.element.implicit && !['start', 'end'].includes(menu.element.kind) && <button role="menuitem" onClick={() => { setPropertiesDraft({ element: menu.element!, version: documentState!.version, diagramId: diagram.id }); setMenu(undefined); }}><SlidersHorizontal size={13} /> Properties…</button>}
           {native && selectionCount > 0 && <><button role="menuitem" onClick={deleteSelection}><Trash2 size={13} /> {selectionCount > 1 ? `Delete ${selectionCount} items` : menu.relation ? 'Delete relationship' : 'Delete element'} <kbd>Del</kbd></button><div className="menu-divider" /></>}

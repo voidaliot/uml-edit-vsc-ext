@@ -120,8 +120,9 @@ export async function openPreviewDocument(path, broadcast = () => {}) {
           await change((source.trim() ? source.trimEnd() + eol + eol : '') + starter.replace(/\r?\n/g, eol), layoutText);
           break;
         }
-        case 'undo': { const linked = undo.at(-1)?.linked === true; await travel(undo, redo, linked); if (linked) await travel(undo, redo); break; }
-        case 'redo': await travel(redo, undo); if (redo.at(-1)?.linked) await travel(redo, undo, true); break;
+        // Every placement that completed the source edit travels with it.
+        case 'undo': while (undo.at(-1)?.linked) await travel(undo, redo, true); await travel(undo, redo); break;
+        case 'redo': await travel(redo, undo); while (redo.at(-1)?.linked) await travel(redo, undo, true); break;
         case 'ready':
         case 'openSource': break;
       }

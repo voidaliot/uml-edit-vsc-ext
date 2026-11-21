@@ -274,18 +274,20 @@ export class UmlEditorProvider implements vscode.CustomTextEditorProvider, vscod
         return document.version !== version;
       };
       if (step && step.sourceText === document.getText()) {
-        await this.applyStep(document, state, direction);
-        // A placement that completed a source edit goes back together with that edit.
-        if (direction === 'undo' && step.linked) await native();
+        // Placements that completed a source edit (there can be several, such as a renamed element's
+        // position and the bends it no longer has) go back together, then the edit itself.
+        if (direction === 'undo' && step.linked) {
+          while (state.undo.at(-1)?.linked && state.undo.at(-1)!.sourceText === document.getText()) await this.applyStep(document, state, direction);
+          await native();
+        } else await this.applyStep(document, state, direction);
         return;
       }
       if (!session.panel.active) return;
       const changed = await native();
       // The native stack had nothing left: the placement step is the next one after all.
       if (!changed && step) await this.applyStep(document, state, direction);
-      // Redoing a source edit also redoes the placement that completed it.
-      const next = state.redo.at(-1);
-      if (changed && direction === 'redo' && next?.linked && next.sourceText === document.getText()) await this.applyStep(document, state, direction);
+      // Redoing a source edit also redoes every placement that completed it.
+      while (changed && direction === 'redo' && state.redo.at(-1)?.linked && state.redo.at(-1)!.sourceText === document.getText()) await this.applyStep(document, state, direction);
     });
   }
 

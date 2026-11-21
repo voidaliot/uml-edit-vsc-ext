@@ -140,3 +140,38 @@ describe('moving a declaration keeps it above the lines that name it', () => {
     expect(applyDiagramEdit(already, 'diagram-1', { type: 'moveToContainer', elementId: 'B', parentId: 'P' })).toContain('package P {\n  class B\n}');
   });
 });
+
+describe('pull request review', () => {
+  it('writes an initial or final transition inside the composite state it belongs to', () => {
+    const source = uml('state Outer {\n  state A\n  state B\n}\nstate Top');
+    const initial = applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: '[*]', target: 'A', arrow: '-->', label: '' });
+    expect(initial).toBe(uml('state Outer {\n  state A\n  state B\n  [*] --> A\n}\nstate Top'));
+    const parsed = block(initial), start = parsed.elements.find(element => element.kind === 'start')!;
+    expect(start.parentId).toBe('Outer');
+    const final = applyDiagramEdit(initial, 'diagram-1', { type: 'addRelation', source: 'B', target: '[*]', arrow: '-->', label: '' });
+    expect(final).toContain('  B --> [*]\n}');
+    expect(block(final).elements.find(element => element.kind === 'end')!.parentId).toBe('Outer');
+    // A top-level state keeps the top-level symbols, written at the end as before.
+    expect(applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: '[*]', target: 'Top', arrow: '-->', label: '' })).toBe(uml('state Outer {\n  state A\n  state B\n}\nstate Top\n[*] --> Top'));
+  });
+
+  it('connects an existing nested initial symbol from inside its own state', () => {
+    const source = uml('state Outer {\n  [*] --> A\n  state B\n}\nstate Top');
+    const start = block(source).elements.find(element => element.kind === 'start')!;
+    const result = applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: start.id, target: 'B', arrow: '-->', label: 'also' });
+    expect(result).toBe(uml('state Outer {\n  [*] --> A\n  state B\n  [*] --> B : also\n}\nstate Top'));
+    // Reaching a state outside its scope would need another symbol; that is refused, not rebound.
+    expect(() => applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: start.id, target: 'Top', arrow: '-->', label: '' })).toThrow(/cannot be written in the right state/);
+  });
+
+  it('writes into the right concurrent region', () => {
+    const source = uml('state Par {\n  state L1\n  --\n  state R1\n}');
+    const result = applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: '[*]', target: 'R1', arrow: '-->', label: '' });
+    expect(result).toBe(uml('state Par {\n  state L1\n  --\n  state R1\n  [*] --> R1\n}'));
+    const left = applyDiagramEdit(source, 'diagram-1', { type: 'addRelation', source: '[*]', target: 'L1', arrow: '-->', label: '' });
+    expect(left).toBe(uml('state Par {\n  state L1\n  [*] --> L1\n  --\n  state R1\n}'));
+    const start = block(left).elements.find(element => element.kind === 'start')!, region = block(left).elements.find(element => element.id === start.parentId)!;
+    expect(region.kind).toBe('state-region');
+    expect(block(left).elements.find(element => element.id === 'L1')!.parentId).toBe(region.id);
+  });
+});

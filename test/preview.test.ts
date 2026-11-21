@@ -144,6 +144,21 @@ describe('live PlantUML file with a layout file', () => {
     expect(stepped.layouts['diagram-1'].positions).toEqual(placed);
   });
 
+  it('undoes every placement that completed an edit together with it', async () => {
+    const { model } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
+    const before = await model.snapshot();
+    const edited = await model.receive({ type: 'edit', version: before.version, diagramId: 'diagram-1', edit: { type: 'addElement', kind: 'class', name: 'Dropped' } });
+    const first = { ...positions, Dropped: { x: 500, y: 300 } }, second = { ...first, A: { x: 7, y: 7 } };
+    await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: positions, layout: { positions: first } });
+    await model.receive({ type: 'layout', linked: true, version: edited.version, diagramId: 'diagram-1', basePositions: first, layout: { positions: second } });
+    const undone = await model.receive({ type: 'undo' });
+    expect(undone.source).toBe(before.source);
+    expect(undone.layouts['diagram-1'].positions).toEqual(positions);
+    const redone = await model.receive({ type: 'redo' });
+    expect(redone.source).toBe(edited.source);
+    expect(redone.layouts['diagram-1'].positions).toEqual(second);
+  });
+
   it('keeps relationship bends with the placements, in the same history, until Re-layout clears both', async () => {
     const { model, layoutPath } = await fixture(serializeLayoutFile({ 'diagram-1': { positions } }));
     const key = bendKey('A', 'B', 0), bends = { [key]: [{ x: 10, y: 20 }] };

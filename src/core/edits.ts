@@ -157,6 +157,26 @@ export interface EditOptions {
   kind?: DiagramKind;
 }
 
+/**
+ * Where a statement scoped to a composite state or one of its concurrent regions is written: before
+ * the closing brace, or before the separator that ends the region, at the indentation of its contents.
+ */
+function scopeInsertion(block: DiagramBlock, code: string[], lines: string[], scope: string): [number, string] {
+  const container = findElement(block, scope);
+  const composite = container.kind === 'state-region' ? findElement(block, container.parentId ?? '') : container;
+  if (composite.endLine <= composite.startLine || !/^\s*}\s*$/.test(code[composite.endLine])) throw new Error('Add this transition in the source editor: its state has no block to write it in.');
+  let at = composite.endLine;
+  if (container.kind === 'state-region') {
+    const regions = block.elements.filter(element => element.kind === 'state-region' && element.parentId === composite.id).sort((a, b) => a.startLine - b.startLine);
+    const index = regions.indexOf(container);
+    // The first region runs up to the first separator; every other one from its separator to the next.
+    at = index === 0 ? container.endLine : regions[index + 1]?.startLine ?? composite.endLine;
+  }
+  const child = block.elements.find(element => (element.parentId === container.id || element.parentId === composite.id) && element.startLine > composite.startLine && element.startLine < at && !/^\s*$/.test(lines[element.startLine]));
+  const indent = child ? lines[child.startLine].match(/^\s*/)![0] : (lines[composite.startLine].match(/^\s*/)?.[0] ?? '') + '  ';
+  return [at, indent];
+}
+
 /** Apply a narrowly scoped source patch; never serialize the parsed graph back over the document. */
 export function applyDiagramEdit(source: string, diagramId: string, edit: DiagramEdit, options: EditOptions = {}): string {
   if (diagramId === 'document') {
@@ -431,7 +451,24 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
       const to = pseudo(edit.target) ? undefined : findElement(block, edit.target);
       const endpoint = (element: DiagramElement | undefined) => !element || ['start', 'end'].includes(element.kind) ? '[*]' : reference(element.id);
       if (edit.sequenceRow !== undefined && (block.kind !== 'sequence' || !Number.isSafeInteger(edit.sequenceRow) || edit.sequenceRow < 0 || edit.sequenceRow > 20000)) throw new Error('Choose a valid sequence row.');
-      insertAt(edit.sequenceRow === undefined ? block.endLine : sequenceInsertionLine(block, edit.sequenceRow), [`${endpoint(from)} ${edit.arrow} ${endpoint(to)}${edit.label.trim() ? ` : ${edit.label.trim()}` : ''}`]);
+      const text = `${endpoint(from)} ${edit.arrow} ${endpoint(to)}${edit.label.trim() ? ` : ${edit.label.trim()}` : ''}`;
+      // `[*]` means the initial or final symbol of the scope its line is written in, so a transition
+      // with such an end belongs inside that scope: the symbol's own, or the state it is attached to.
+      const pseudoEnd = (element: DiagramElement | undefined) => !element || ['start', 'end'].includes(element.kind);
+      const scope = block.kind !== 'state' ? undefined : pseudoEnd(from) && from ? from.parentId ?? '' : pseudoEnd(to) && to ? to.parentId ?? '' : pseudoEnd(from) ? to?.parentId ?? '' : pseudoEnd(to) ? from?.parentId ?? '' : undefined;
+      // An initial or final symbol only connects states of its own region, as in UML.
+      const other = pseudoEnd(from) ? to : from;
+      if (scope !== undefined && other && !pseudoEnd(other) && (other.parentId ?? '') !== scope) throw new Error('An initial or final symbol connects only to states inside the same state. This transition cannot be written in the right state.');
+      if (scope) {
+        const [at, indent] = scopeInsertion(block, code, lines, scope);
+        insertAt(at, [indent + text]);
+        const result = lines.join(eol), added = parseDocument(result, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
+        const relation = added?.relations.find(candidate => candidate.startLine === at), symbol = (id: string | undefined) => added?.elements.find(element => element.id === id);
+        const placed = (id: string | undefined, wanted: DiagramElement | undefined) => wanted && !pseudoEnd(wanted) ? id === wanted.id : (symbol(id)?.parentId ?? '') === scope;
+        if (!added?.graphical || !relation || !placed(relation.source, from) || !placed(relation.target, to)) throw new Error('This transition cannot be written in the right state. Add it in the source editor.');
+        return result;
+      }
+      insertAt(edit.sequenceRow === undefined ? block.endLine : sequenceInsertionLine(block, edit.sequenceRow), [text]);
     } else {
       const relation = block.relations.find(candidate => candidate.id === edit.relationId);
       if (!relation) throw new Error('This relationship no longer exists.');

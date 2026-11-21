@@ -79,3 +79,33 @@ test('snapping can be switched off from the toolbar', async ({ page }) => {
   expect(free.guides).toBe(0);
   expect(free.offset).toBeGreaterThan(1.5);
 });
+
+test('an element deselected with Shift-click is left out of Delete, Cut and Copy', async ({ page }) => {
+  const original = '@startuml\nclass A\nclass B\nclass C\n@enduml';
+  await load(page, original + '\n');
+  await node(page, 'A').click();
+  await node(page, 'B').click({ modifiers: ['Shift'] });
+  await node(page, 'A').click({ modifiers: ['Shift'] });
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+  await expect(node(page, 'B')).toHaveClass(/selected/);
+  await page.keyboard.press('Delete');
+  await expect(node(page, 'B')).toHaveCount(0);
+  await expect(node(page, 'A')).toBeVisible();
+  expect(await source(page)).toBe('@startuml\nclass A\nclass C\n@enduml');
+  await page.keyboard.press('Control+z');
+  // Duplicate after the same deselection copies only what is still selected.
+  await node(page, 'A').click();
+  await node(page, 'C').click({ modifiers: ['Shift'] });
+  await node(page, 'A').click({ modifiers: ['Shift'] });
+  await page.keyboard.press('Control+d');
+  await expect(node(page, 'C2')).toBeVisible();
+  await expect(node(page, 'A2')).toHaveCount(0);
+});
+
+test('Initial added to a state inside a composite state stays inside it', async ({ page }) => {
+  await load(page, '@startuml\nstate Outer {\n  state Inner\n}\n@enduml\n');
+  await node(page, 'Inner').click();
+  await page.locator('.palette-list').getByRole('button', { name: 'initial', exact: true }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  expect(await source(page)).toBe('@startuml\nstate Outer {\n  state Inner\n  [*] --> Inner\n}\n@enduml');
+});
