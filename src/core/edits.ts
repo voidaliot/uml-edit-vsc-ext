@@ -1,4 +1,4 @@
-import type { DiagramBlock, DiagramEdit, DiagramElement } from '../shared/protocol';
+import type { DiagramBlock, DiagramEdit, DiagramElement, DiagramKind } from '../shared/protocol';
 import { parseDocument } from './parser';
 import { codeLines, isIdentifier, parseDeclaration, parseRelation, parseMemberStatement, quote, reference } from './syntax';
 import { getNativeTemplate } from './templates';
@@ -6,6 +6,10 @@ import { familyFor } from './families/registry';
 import { editProcedure } from './procedures';
 import { editLegacyActivity } from './legacy-activity';
 import { moveSequenceEvent, sequenceInsertionLine } from './sequence';
+import { pasteInsertionLine, pasteLines } from './clipboard';
+import { setProperties } from './properties';
+import { moveToContainer } from './containment';
+import { addConnectedElement, reconnectRelation } from './relation-edits';
 
 const memberKinds = new Set(['class', 'abstract class', 'interface', 'enum', 'annotation', 'object', 'entity']);
 const relationArrows = new Set(['-->', '->', '<--', '<-', '--', '..', '..>', '<..', '<|--', '--|>', '<|..', '..|>', '*--', '--*', 'o--', '--o', '||--o{', '}o--||', '||--||', '}o--o{', '-->>', '->>', '<->', '<-->']);
@@ -17,10 +21,10 @@ function nameValue(name: string): string {
   return name.trim();
 }
 
-function newId(block: DiagramBlock, kind: string): string {
+function newId(block: DiagramBlock, kind: string, taken: ReadonlySet<string> = new Set()): string {
   const stem = kind.replace(/[^a-zA-Z0-9_]/g, '_') || 'element';
   let index = 1;
-  while (block.elements.some(element => element.id === `${stem}_${index}`)) index++;
+  while (taken.has(`${stem}_${index}`) || block.elements.some(element => element.id === `${stem}_${index}`)) index++;
   return `${stem}_${index}`;
 }
 
@@ -34,13 +38,152 @@ function assertComplete(block: DiagramBlock): void {
   if (!/^\s*@end\w+\b/im.test(block.source)) throw new Error('Complete the @start / @end block in the source editor first.');
 }
 
+
+const reservedAliases = new Set(['as', 'class', 'interface', 'enum', 'abstract', 'annotation', 'object', 'entity', 'actor', 'participant', 'boundary', 'control', 'collections', 'queue', 'database', 'component', 'node', 'artifact', 'cloud', 'package', 'namespace', 'frame', 'folder', 'rectangle', 'card', 'file', 'storage', 'stack', 'agent', 'person', 'process', 'label', 'hexagon', 'circle', 'usecase', 'state', 'action', 'note', 'start', 'stop', 'end', 'if', 'else', 'endif', 'while', 'repeat', 'fork', 'split', 'alt', 'opt', 'loop', 'par', 'break', 'critical', 'group', 'ref', 'activate', 'deactivate', 'destroy', 'return', 'title', 'legend', 'header', 'footer', 'hide', 'show', 'skinparam', 'left', 'right', 'top', 'bottom', 'together', 'of', 'on', 'over', 'is']);
+
+/** A readable alias taken from the name: "Line item" becomes LineItem. */
+function aliasFor(block: DiagramBlock, kind: string, name: string, taken: ReadonlySet<string> = new Set()): string {
+  const words = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').split(/[^A-Za-z0-9_]+/).filter(Boolean);
+  const stem = words.length === 1 ? words[0] : words.map(word => word[0].toUpperCase() + word.slice(1)).join('');
+  if (!stem || !/^[A-Za-z_]/.test(stem) || stem.length > 40 || reservedAliases.has(stem.toLowerCase())) return newId(block, kind, taken);
+  let alias = stem, index = 2;
+  while (taken.has(alias) || block.elements.some(element => element.id === alias)) alias = `${stem}${index++}`;
+  return alias;
+}
+
+const activityOpen = /^(?:(?:if|while|switch)\s*\(|repeat(?:\s*:.*;)?$|(?:fork|split)$)/i;
+const activityClose = /^(?:endif|endswitch|endwhile|repeat\s+while\b|end\s*(?:fork|split)\b|end\s+merge$)/i;
+
+/** The first and last line of the control structure a decision, merge, fork or join belongs to. */
+function activityStructure(block: DiagramBlock, code: string[], line: number): [number, number] | undefined {
+  const text = (index: number) => code[index].trim();
+  const scan = (from: number, step: 1 | -1): number | undefined => {
+    let depth = 0;
+    for (let index = from; index > block.startLine && index < block.endLine; index += step) {
+      const opens = activityOpen.test(text(index)), closes = activityClose.test(text(index));
+      if (step > 0 ? opens : closes) depth++;
+      else if (step > 0 ? closes : opens) { if (--depth === 0) return index; }
+    }
+  };
+  if (activityOpen.test(text(line))) { const end = scan(line, 1); return end === undefined ? undefined : [line, end]; }
+  if (activityClose.test(text(line))) { const start = scan(line, -1); return start === undefined ? undefined : [start, line]; }
+  if (/^elseif\b/i.test(text(line))) {
+    // One alternative of a chain: up to the next alternative at the same depth.
+    let depth = 0;
+    for (let index = line + 1; index < block.endLine; index++) {
+      if (activityOpen.test(text(index))) depth++;
+      else if (activityClose.test(text(index))) { if (depth-- === 0) return [line, index - 1]; }
+      else if (depth === 0 && /^(?:elseif|else)\b/i.test(text(index))) return [line, index - 1];
+    }
+  }
+}
+
+/** Every source line that goes when this element is deleted. */
+function removalLines(block: DiagramBlock, code: string[], element: DiagramElement): Set<number> {
+  if (!block.graphical) throw new Error('This diagram contains advanced syntax. Delete in the source panel to review all references.');
+  const remove = new Set<number>();
+  const span = (from: number, to: number) => { for (let line = from; line <= to; line++) remove.add(line); };
+  if (block.kind === 'activity' || block.kind === 'sdl') {
+    if (['decision', 'merge', 'fork', 'join'].includes(element.kind)) {
+      const structure = activityStructure(block, code, element.startLine);
+      if (!structure) throw new Error('Delete this control structure in the source editor.');
+      span(...structure);
+    } else span(element.startLine, element.endLine);
+  } else if (block.kind === 'mindmap' || block.kind === 'wbs') {
+    const ids = new Set([element.id]);
+    for (const candidate of block.elements) if (candidate.parentId && ids.has(candidate.parentId)) ids.add(candidate.id);
+    for (const candidate of block.elements) if (ids.has(candidate.id)) remove.add(candidate.startLine);
+  } else if (element.kind === 'sequence-fragment') {
+    // Dissolve the frame; its messages stay in the conversation.
+    remove.add(element.startLine); remove.add(element.endLine);
+    for (const divider of block.elements) if (divider.kind === 'sequence-divider' && divider.meta?.fragment === element.id) remove.add(divider.startLine);
+  } else {
+    const descendants = new Set([element.id]);
+    const children = new Map<string, string[]>();
+    for (const candidate of block.elements) if (candidate.parentId) children.set(candidate.parentId, [...children.get(candidate.parentId) ?? [], candidate.id]);
+    const queue = [element.id];
+    while (queue.length) for (const id of children.get(queue.shift()!) ?? []) if (!descendants.has(id)) { descendants.add(id); queue.push(id); }
+    if (!element.implicit) span(element.startLine, element.endLine);
+    for (const relation of block.relations) if (descendants.has(relation.source) || descendants.has(relation.target)) remove.add(relation.startLine);
+    for (let line = block.startLine + 1; line < block.endLine; line++) {
+      const owner = parseMemberStatement(code[line])?.owner;
+      if (owner && descendants.has(owner)) remove.add(line);
+    }
+  }
+  return remove;
+}
+
+function relationLine(block: DiagramBlock, relationId: string): number {
+  if (['activity', 'sdl', 'mindmap', 'wbs'].includes(block.kind)) throw new Error('This connection is derived from the diagram structure. Edit the structure in the source panel.');
+  const relation = block.relations.find(candidate => candidate.id === relationId);
+  if (!relation) throw new Error('This relationship no longer exists.');
+  return relation.startLine;
+}
+
+/** Remove a whole selection as one edit. Items that cannot be removed are skipped while others can. */
+function deleteSelection(source: string, diagramId: string, elementIds: string[], relationIds: string[], options: EditOptions): string {
+  const block = parseDocument(source, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId)!;
+  const native = !block.meta?.legacy && !familyFor(block.kind) && !block.elements.some(element => element.meta?.procedure);
+  let failure: unknown, removed = 0;
+  if (native) {
+    const code = codeLines(source), remove = new Set<number>();
+    for (const id of new Set(elementIds)) {
+      const element = block.elements.find(candidate => candidate.id === id);
+      if (!element) continue;
+      try { for (const line of removalLines(block, code, element)) remove.add(line); removed++; } catch (error) { failure ??= error; }
+    }
+    for (const id of new Set(relationIds)) {
+      try { remove.add(relationLine(block, id)); removed++; } catch (error) { failure ??= error; }
+    }
+    if (!removed && failure) throw failure;
+    return source.split(/\r?\n/).filter((_, index) => !remove.has(index)).join(source.includes('\r\n') ? '\r\n' : '\n');
+  }
+  // Family adapters patch one item at a time. Work from the end of the source so
+  // earlier items keep their line-derived identities while later ones go.
+  const order = (id: string, relation: boolean) => (relation ? block.relations : block.elements).find(item => item.id === id)?.startLine ?? -1;
+  const items = [...[...new Set(elementIds)].map(id => ({ id, relation: false })), ...[...new Set(relationIds)].map(id => ({ id, relation: true }))].sort((a, b) => order(b.id, b.relation) - order(a.id, a.relation));
+  let current = source;
+  for (const item of items) {
+    const latest = parseDocument(current, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
+    if (!latest || !(item.relation ? latest.relations : latest.elements).some(candidate => candidate.id === item.id)) continue;
+    try { current = applyDiagramEdit(current, diagramId, item.relation ? { type: 'deleteRelation', relationId: item.id } : { type: 'deleteElement', elementId: item.id }, options); removed++; } catch (error) { failure ??= error; }
+  }
+  if (!removed && failure) throw failure;
+  return current;
+}
+
+export interface EditOptions {
+  /** The family the editor shows for a block whose source does not settle it yet. */
+  kind?: DiagramKind;
+}
+
+/**
+ * Where a statement scoped to a composite state or one of its concurrent regions is written: before
+ * the closing brace, or before the separator that ends the region, at the indentation of its contents.
+ */
+function scopeInsertion(block: DiagramBlock, code: string[], lines: string[], scope: string): [number, string] {
+  const container = findElement(block, scope);
+  const composite = container.kind === 'state-region' ? findElement(block, container.parentId ?? '') : container;
+  if (composite.endLine <= composite.startLine || !/^\s*}\s*$/.test(code[composite.endLine])) throw new Error('Add this transition in the source editor: its state has no block to write it in.');
+  let at = composite.endLine;
+  if (container.kind === 'state-region') {
+    const regions = block.elements.filter(element => element.kind === 'state-region' && element.parentId === composite.id).sort((a, b) => a.startLine - b.startLine);
+    const index = regions.indexOf(container);
+    // The first region runs up to the first separator; every other one from its separator to the next.
+    at = index === 0 ? container.endLine : regions[index + 1]?.startLine ?? composite.endLine;
+  }
+  const child = block.elements.find(element => (element.parentId === container.id || element.parentId === composite.id) && element.startLine > composite.startLine && element.startLine < at && !/^\s*$/.test(lines[element.startLine]));
+  const indent = child ? lines[child.startLine].match(/^\s*/)![0] : (lines[composite.startLine].match(/^\s*/)?.[0] ?? '') + '  ';
+  return [at, indent];
+}
+
 /** Apply a narrowly scoped source patch; never serialize the parsed graph back over the document. */
-export function applyDiagramEdit(source: string, diagramId: string, edit: DiagramEdit): string {
+export function applyDiagramEdit(source: string, diagramId: string, edit: DiagramEdit, options: EditOptions = {}): string {
   if (diagramId === 'document') {
     if (edit.type !== 'replaceSource' || typeof edit.source !== 'string') throw new Error('Only explicit source replacement can edit the whole document.');
     return edit.source;
   }
-  const block = parseDocument(source).diagrams.find(candidate => candidate.id === diagramId);
+  const block = parseDocument(source, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
   if (!block) throw new Error('This diagram no longer exists. Reopen it and try again.');
   const eol = source.includes('\r\n') ? '\r\n' : '\n';
   const lines = source.split(/\r?\n/);
@@ -54,7 +197,59 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     return lines.join(eol);
   }
   assertComplete(block);
+  // Edits that rewrite a declaration line are checked on their result: a comment or brace caught in
+  // the rewritten text must not take the diagram, or the blocks after it, off the canvas.
+  const stillEditable = (result: string, action: string): string => {
+    if (result === source) return result;
+    const parse = (text: string) => parseDocument(text, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams;
+    const after = parse(result), same = after.find(candidate => candidate.id === diagramId);
+    if (after.length !== parse(source).length || !same?.graphical || same.kind !== block.kind) throw new Error(`${action} would leave syntax the canvas cannot edit. Make this change in the source editor.`);
+    return result;
+  };
+  if (edit.type === 'deleteElements') {
+    if (!Array.isArray(edit.elementIds) || !Array.isArray(edit.relationIds) || !edit.elementIds.length && !edit.relationIds.length) throw new Error('Select something to delete.');
+    return deleteSelection(source, diagramId, edit.elementIds, edit.relationIds, options);
+  }
+
+  // Connection gestures: composed from the element and relationship edits, or one endpoint token.
+  if (edit.type === 'addConnectedElement') return addConnectedElement(source, block, edit, options, applyDiagramEdit);
+  if (edit.type === 'reconnectRelation') return reconnectRelation(source, block, edit, options);
+
   if (edit.type === 'moveSequenceEvent') return moveSequenceEvent(source, block, edit.eventId, edit.row);
+
+  // Clipboard and properties work on declaration lines; both refuse other families themselves.
+  if (edit.type === 'paste') {
+    // A copy keeps its alias where it is free; beside its original, Order becomes Order2.
+    const fresh = (id: string, taken: ReadonlySet<string>) => {
+      if (isIdentifier(id) && !taken.has(id) && !reservedAliases.has(id.toLowerCase())) return id;
+      const stem = id.replace(/(?<=\D)\d+$/, '');
+      return aliasFor(block, 'element', stem, stem === id ? taken : new Set([...taken, stem]));
+    };
+    lines.splice(pasteInsertionLine(block), 0, ...pasteLines(block, edit, fresh));
+    const result = lines.join(eol);
+    const pasted = parseDocument(result, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
+    if (!pasted?.graphical || pasted.kind !== block.kind) throw new Error('Pasting here would leave syntax the canvas cannot edit. Paste in the source editor instead.');
+    return result;
+  }
+  if (edit.type === 'properties') return stillEditable(setProperties(source, block, edit.elementId, edit), 'Changing these properties');
+  // Membership is where a declaration is written; the move refuses every family where it is not.
+  if (edit.type === 'moveToContainer') {
+    const result = stillEditable(moveToContainer(source, block, edit.elementId, edit.parentId), 'Moving this element');
+    // PlantUML creates an element where it is first mentioned. A declaration that lands below a
+    // relationship or member line naming it would be drawn here in its new container, but by
+    // PlantUML where that earlier line stands.
+    const mentionedFirst = (text: string) => {
+      const next = parseDocument(text, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId)!, nextCode = codeLines(text);
+      const first = new Map<string, number>(), note = (id: string, line: number) => { if (!first.has(id) || line < first.get(id)!) first.set(id, line); };
+      for (const relation of next.relations) { note(relation.source, relation.startLine); note(relation.target, relation.startLine); }
+      for (let line = next.startLine + 1; line < next.endLine; line++) { const owner = parseMemberStatement(nextCode[line])?.owner; if (owner && !next.relations.some(relation => relation.startLine === line)) note(owner, line); }
+      return new Set(next.elements.filter(element => !element.implicit && first.has(element.id) && first.get(element.id)! < element.startLine).map(element => element.id));
+    };
+    const before = mentionedFirst(source), late = [...mentionedFirst(result)].find(id => !before.has(id));
+    if (late !== undefined) throw new Error(`"${block.elements.find(element => element.id === late)?.name ?? late}" is named by a line above the place it would move to, and PlantUML would keep it there. Move that line below, or make this change in the source editor.`);
+    return result;
+  }
+
   if (block.meta?.legacy) {
     const result = editLegacyActivity(source, block, edit);
     if (result !== undefined) return result;
@@ -113,7 +308,14 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
       if (/[;\r\n]/.test(name)) throw new Error('Activity names cannot contain semicolons.');
       const end = [...block.elements].reverse().find(element => element.kind === 'end');
       const index = end?.startLine ?? block.endLine;
-      if (edit.kind === 'decision') {
+      if (edit.kind === 'start') {
+        if (block.elements.some(element => element.kind === 'start')) throw new Error('This activity already has a start.');
+        // Directives and the title stay above the flow they configure.
+        let first = block.startLine + 1;
+        while (first < block.endLine && (!code[first].trim() || /^\s*(?:title\b|skinparam\b|!|left to right|top to bottom|scale\b|hide\b|show\b)/i.test(code[first]))) first++;
+        insertAt(block.elements.length ? Math.min(first, ...block.elements.map(element => element.startLine)) : first, ['start']);
+      } else if (edit.kind === 'stop') insertAt(block.endLine, ['stop']);
+      else if (edit.kind === 'decision') {
         if (/[()]/.test(name)) throw new Error('Decision names cannot contain parentheses in inline editing.');
         insertAt(index, [`if (${name}) then (yes)`, '  :Action;', 'else (no)', '  :Alternative;', 'endif']);
       } else if (edit.kind.startsWith('sdl-')) insertAt(index, [`:${name}; <<${edit.kind.slice(4)}>>`]);
@@ -125,7 +327,7 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     } else if (block.kind === 'sequence' && ['alt', 'loop', 'opt', 'divider'].includes(edit.kind)) {
       insertAt(block.endLine, edit.kind === 'divider' ? [`== ${name} ==`] : [`${edit.kind} ${name}`, 'end']);
     } else {
-      const id = newId(block, edit.kind);
+      const id = edit.kind === 'note' ? newId(block, edit.kind) : aliasFor(block, edit.kind, name);
       let index = block.endLine;
       let indent = '';
       if (edit.parentId) {
@@ -137,7 +339,7 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
         // Participants must be declared before their first message.
         index = block.relations[0]?.startLine ?? block.endLine;
       }
-      const declaration = `${indent}${edit.kind} ${quote(name)} as ${id}`;
+      const declaration = id === name ? `${indent}${edit.kind} ${id}` : `${indent}${edit.kind} ${quote(name)} as ${id}`;
       const hasMembers = memberKinds.has(edit.kind) && block.kind !== 'sequence' && !(edit.kind === 'interface' && ['component', 'deployment'].includes(block.kind));
       if (edit.kind === 'note' && block.kind === 'sequence') {
         const participant = block.elements.find(element => element.kind !== 'note');
@@ -242,11 +444,31 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     if (typeof edit.label !== 'string' || /[\r\n\u0000]/.test(edit.label)) throw new Error('Relationship labels must fit on one line.');
     if (!relationArrows.has(edit.arrow)) throw new Error('Choose a supported relationship style.');
     if (edit.type === 'addRelation') {
-      const from = findElement(block, edit.source);
-      const to = findElement(block, edit.target);
-      const endpoint = (element: DiagramElement) => ['start', 'end'].includes(element.kind) ? '[*]' : reference(element.id);
+      // A state machine's initial and final symbols exist only as the [*] end of a transition.
+      const pseudo = (id: string) => id === '[*]' && block.kind === 'state';
+      if (pseudo(edit.source) && pseudo(edit.target)) throw new Error('Connect the initial or final symbol to a state.');
+      const from = pseudo(edit.source) ? undefined : findElement(block, edit.source);
+      const to = pseudo(edit.target) ? undefined : findElement(block, edit.target);
+      const endpoint = (element: DiagramElement | undefined) => !element || ['start', 'end'].includes(element.kind) ? '[*]' : reference(element.id);
       if (edit.sequenceRow !== undefined && (block.kind !== 'sequence' || !Number.isSafeInteger(edit.sequenceRow) || edit.sequenceRow < 0 || edit.sequenceRow > 20000)) throw new Error('Choose a valid sequence row.');
-      insertAt(edit.sequenceRow === undefined ? block.endLine : sequenceInsertionLine(block, edit.sequenceRow), [`${endpoint(from)} ${edit.arrow} ${endpoint(to)}${edit.label.trim() ? ` : ${edit.label.trim()}` : ''}`]);
+      const text = `${endpoint(from)} ${edit.arrow} ${endpoint(to)}${edit.label.trim() ? ` : ${edit.label.trim()}` : ''}`;
+      // `[*]` means the initial or final symbol of the scope its line is written in, so a transition
+      // with such an end belongs inside that scope: the symbol's own, or the state it is attached to.
+      const pseudoEnd = (element: DiagramElement | undefined) => !element || ['start', 'end'].includes(element.kind);
+      const scope = block.kind !== 'state' ? undefined : pseudoEnd(from) && from ? from.parentId ?? '' : pseudoEnd(to) && to ? to.parentId ?? '' : pseudoEnd(from) ? to?.parentId ?? '' : pseudoEnd(to) ? from?.parentId ?? '' : undefined;
+      // An initial or final symbol only connects states of its own region, as in UML.
+      const other = pseudoEnd(from) ? to : from;
+      if (scope !== undefined && other && !pseudoEnd(other) && (other.parentId ?? '') !== scope) throw new Error('An initial or final symbol connects only to states inside the same state. This transition cannot be written in the right state.');
+      if (scope) {
+        const [at, indent] = scopeInsertion(block, code, lines, scope);
+        insertAt(at, [indent + text]);
+        const result = lines.join(eol), added = parseDocument(result, { kinds: options.kind ? { [diagramId]: options.kind } : undefined }).diagrams.find(candidate => candidate.id === diagramId);
+        const relation = added?.relations.find(candidate => candidate.startLine === at), symbol = (id: string | undefined) => added?.elements.find(element => element.id === id);
+        const placed = (id: string | undefined, wanted: DiagramElement | undefined) => wanted && !pseudoEnd(wanted) ? id === wanted.id : (symbol(id)?.parentId ?? '') === scope;
+        if (!added?.graphical || !relation || !placed(relation.source, from) || !placed(relation.target, to)) throw new Error('This transition cannot be written in the right state. Add it in the source editor.');
+        return result;
+      }
+      insertAt(edit.sequenceRow === undefined ? block.endLine : sequenceInsertionLine(block, edit.sequenceRow), [text]);
     } else {
       const relation = block.relations.find(candidate => candidate.id === edit.relationId);
       if (!relation) throw new Error('This relationship no longer exists.');
@@ -260,36 +482,7 @@ export function applyDiagramEdit(source: string, diagramId: string, edit: Diagra
     return lines.join(eol);
   }
 
-  if (edit.type === 'deleteRelation') {
-    if (['activity', 'sdl', 'mindmap', 'wbs'].includes(block.kind)) throw new Error('This connection is derived from the diagram structure. Edit the structure in the source panel.');
-    const relation = block.relations.find(candidate => candidate.id === edit.relationId);
-    if (!relation) throw new Error('This relationship no longer exists.');
-    return removeLines(new Set([relation.startLine]));
-  }
-  if (edit.type === 'deleteElement') {
-    const element = findElement(block, edit.elementId);
-    if (!block.graphical) throw new Error('This diagram contains advanced syntax. Delete in the source panel to review all references.');
-    if (['start', 'end', 'decision', 'merge'].includes(element.kind)) throw new Error('Delete this control structure in the source editor.');
-    const remove = new Set<number>();
-    if (block.kind === 'activity' || block.kind === 'sdl') for (let line = element.startLine; line <= element.endLine; line++) remove.add(line);
-    else if (block.kind === 'mindmap' || block.kind === 'wbs') {
-      const ids = new Set([element.id]);
-      for (const candidate of block.elements) if (candidate.parentId && ids.has(candidate.parentId)) ids.add(candidate.id);
-      for (const candidate of block.elements) if (ids.has(candidate.id)) remove.add(candidate.startLine);
-    } else {
-      const descendants = new Set([element.id]);
-      const children = new Map<string, string[]>();
-      for (const candidate of block.elements) if (candidate.parentId) children.set(candidate.parentId, [...children.get(candidate.parentId) ?? [], candidate.id]);
-      const queue = [element.id];
-      while (queue.length) for (const id of children.get(queue.shift()!) ?? []) if (!descendants.has(id)) { descendants.add(id); queue.push(id); }
-      if (!element.implicit) for (let line = element.startLine; line <= element.endLine; line++) remove.add(line);
-      for (const relation of block.relations) if (descendants.has(relation.source) || descendants.has(relation.target)) remove.add(relation.startLine);
-      for (let line = block.startLine + 1; line < block.endLine; line++) {
-        const owner = parseMemberStatement(code[line])?.owner;
-        if (owner && descendants.has(owner)) remove.add(line);
-      }
-    }
-    return removeLines(remove);
-  }
+  if (edit.type === 'deleteRelation') return removeLines(new Set([relationLine(block, edit.relationId)]));
+  if (edit.type === 'deleteElement') return removeLines(removalLines(block, code, findElement(block, edit.elementId)));
   throw new Error('Unknown diagram edit.');
 }

@@ -40,9 +40,31 @@ const baseTemplates: DiagramTemplate[] = [
 export const templates: DiagramTemplate[] = [...baseTemplates.filter(template => !familyFor(template.kind)), { kind: 'sdl', label: 'SDL', description: 'Signals, tasks, procedures, and process flow', palette: ['sdl-input', 'sdl-output', 'sdl-procedure', 'sdl-task', 'sdl-save', 'sdl-load', 'sdl-continuous', 'decision'], source: uml('start\n:Receive request; <<input>>\n:Validate request; <<task>>\n:Store request; <<procedure>>\n:Send response; <<output>>\nstop') }, ...nativeFamilies.flatMap(family => family.templates)];
 for (const template of templates) {
   if (template.kind === 'deployment') template.palette = ['node', 'artifact', 'database', 'cloud', 'component', 'queue', 'folder', 'file', 'storage', 'stack', 'agent', 'person', 'process', 'hexagon', 'circle', 'note'];
-  if (template.kind === 'activity') template.palette = ['activity', 'decision', 'while', 'repeat', 'fork', 'partition'];
+  if (template.kind === 'activity') template.palette = ['activity', 'decision', 'while', 'repeat', 'fork', 'partition', 'start', 'stop'];
   if (template.kind === 'sequence') template.palette.push('note', 'alt', 'loop', 'opt', 'divider');
 }
+/** Palette entries that are symbols without a name of their own. */
+export const unnamedKinds = new Set(['start', 'stop']);
+
+/** The smallest source the editor can build a diagram of this kind on, without sample content. */
+export function blankSource(kind: DiagramKind): string {
+  const sample = getTemplate(kind)?.source ?? '', marker = sample.match(/^@start(\w+)/)?.[1] ?? 'uml';
+  // A library include is what makes a C4 or ArchiMate block one; it is not sample content.
+  const includes = sample.split('\n').filter(line => /^!include\b/.test(line)).map(line => `${line}\n`).join('');
+  return `@start${marker}\n${includes}@end${marker}\n`;
+}
+
+/** What a new diagram starts with: the family's sample, or nothing but its markers. */
+export function starterSource(kind: DiagramKind, blank = false): string | undefined {
+  const template = getNativeTemplate(kind);
+  return template && (blank && supportsBlank(kind) ? blankSource(kind) : template.source);
+}
+
+/** Families with a palette can be drawn from nothing; the others are edited from their sample. */
+export function supportsBlank(kind: DiagramKind): boolean {
+  return (getNativeTemplate(kind)?.palette.length ?? 0) > 0 && !['json', 'yaml', 'salt', 'files', 'jcckit', 'chart', 'timing'].includes(kind);
+}
+
 export const nativeTemplates = templates.filter(template => supportsNativeKind(template.kind));
 /** Reference-only catalogue for explaining gaps; these types cannot be created graphically. */
 export const unsupportedTemplates = templates.filter(template => !supportsNativeKind(template.kind));

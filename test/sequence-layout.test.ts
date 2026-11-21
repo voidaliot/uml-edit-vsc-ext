@@ -55,7 +55,8 @@ describe('compact source-driven sequence layout', () => {
     expect(points[frame.id].x).toBe(60);
     expect(Number(frame.meta?.width)).toBe(Number(block.meta?.sequenceWidth));
     expect(points[frame.id].y).toBe(137 + Number(frame.meta?.row) * 52);
-    expect(Number(frame.meta?.height)).toBe((Number(frame.meta?.endRow) - Number(frame.meta?.row) + 1) * 52);
+    // The frame closes just above the next row, clear of that row's message label.
+    expect(Number(frame.meta?.height)).toBe((Number(frame.meta?.endRow) - Number(frame.meta?.row) + 1) * 52 - 14);
     const note = block.elements.find(element => element.kind === 'sequence-note')!;
     expect(points[note.id].x).toBe(80);
     expect(layoutDiagram(block)).toEqual(points);

@@ -2,7 +2,7 @@
   "name": "aliot-uml-editor",
   "displayName": "Aliot UML Editor",
   "description": "Native React Flow UML diagrams with bidirectional editing of PlantUML text files.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "voidaliot",
   "license": "MIT",
   "preview": true,
@@ -121,9 +121,29 @@
         "title": "Open PlantUML Source",
         "category": "Aliot UML",
         "icon": "$(code)"
+      },
+      {
+        "command": "aliotUml.exportSvg",
+        "title": "Export Diagram as SVG…",
+        "category": "Aliot UML"
+      },
+      {
+        "command": "aliotUml.exportPng",
+        "title": "Export Diagram as PNG…",
+        "category": "Aliot UML"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "aliotUml.exportSvg",
+          "when": "activeCustomEditorId == aliot.umlEditor"
+        },
+        {
+          "command": "aliotUml.exportPng",
+          "when": "activeCustomEditorId == aliot.umlEditor"
+        }
+      ],
       "editor/title": [
         {
           "command": "aliotUml.openEditor",

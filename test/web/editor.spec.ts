@@ -70,7 +70,7 @@ test('right-click placement and dragging preserve positions across source change
   const after = await node.boundingBox();
   expect(after!.x - initial!.x).toBeGreaterThan(60);
   const editor = await source(page);
-  await expect(editor).toHaveValue(/class "Invoice" as/);
+  await expect(editor).toHaveValue(/class Invoice \{/);
   await editor.fill((await editor.inputValue()).replace('"Order" as Order', '"Purchase" as Order'));
   await page.getByRole('button', { name: 'Apply changes' }).click();
   await expect(page.locator('.uml-node[data-element-id="Order"]')).toContainText('Purchase');

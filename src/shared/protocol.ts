@@ -48,20 +48,41 @@ export type DiagramEdit =
   | { type: 'editRelation'; relationId: string; label: string; arrow: string }
   | { type: 'deleteElement'; elementId: string }
   | { type: 'deleteRelation'; relationId: string }
+  /** One undoable step for a whole selection. */
+  | { type: 'deleteElements'; elementIds: string[]; relationIds: string[] }
   | { type: 'replaceSource'; source: string }
-  | { type: 'insertSnippet'; source: string };
+  | { type: 'insertSnippet'; source: string }
+  /** Copied declarations and relationships, renamed to free aliases where they land. */
+  | { type: 'paste'; kind: DiagramKind; source: string }
+  | { type: 'properties'; elementId: string; stereotype: string; color: string }
+  /** Write an element's declaration into another container's body, or at block level without `parentId`. */
+  | { type: 'moveToContainer'; elementId: string; parentId?: string }
+  /** A new element and a relationship from an existing one to it, as one undoable step. */
+  | { type: 'addConnectedElement'; source: string; kind: string; name: string; arrow: string; label: string; sequenceRow?: number }
+  /** Re-attach one end of a relationship; only that endpoint's source token changes. */
+  | { type: 'reconnectRelation'; relationId: string; end: 'source' | 'target'; elementId: string };
 
-export interface DiagramLayout { positions: Record<string, ElementPlacement>; viewport?: { x: number; y: number; zoom: number } }
+export interface DiagramLayout {
+  positions: Record<string, ElementPlacement>;
+  viewport?: { x: number; y: number; zoom: number };
+  /** Manual bend points of relationships, keyed by `relationBendKeys` (absent when there are none). */
+  bends?: Record<string, Point[]>;
+}
 export type Layouts = Record<string, DiagramLayout>;
 export type HostMessage =
-  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number }
+  | { type: 'document'; source: string; version: number; fileName: string; layouts: Layouts; trusted: boolean; revision?: number; /** Families chosen for blank diagrams, per diagram id. */ kinds?: Record<string, DiagramKind> }
   | { type: 'showSource' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  /** The export commands run in the webview, which alone can draw the diagram. */
+  | { type: 'exportRequest'; format: ExportFormat };
+export type ExportFormat = 'svg' | 'png';
 export type WebviewMessage =
   | { type: 'ready' }
-  | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit }
-  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point> }
-  | { type: 'create'; kind: DiagramKind }
+  | { type: 'edit'; version: number; diagramId: string; edit: DiagramEdit; /** The family shown for a block whose source does not settle it. */ kind?: DiagramKind }
+  | { type: 'layout'; diagramId: string; layout: DiagramLayout; version?: number; basePositions?: Record<string, Point>; /** Present only when the message changes bends; they are merged like positions. */ baseBends?: Record<string, Point[]>; /** Completes the source edit made just before it: the two are undone and redone as one step. */ linked?: boolean }
+  | { type: 'create'; kind: DiagramKind; /** Start without the sample content. */ blank?: boolean }
   | { type: 'openSource'; line?: number }
   | { type: 'undo' }
-  | { type: 'redo' };
+  | { type: 'redo' }
+  /** A rendered image to save: SVG markup, or PNG bytes in base64. */
+  | { type: 'export'; format: ExportFormat; name: string; data: string };

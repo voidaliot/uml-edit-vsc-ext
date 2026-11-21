@@ -1,8 +1,9 @@
-import type { HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
+import type { DiagramKind, ExportFormat, HostMessage, WebviewMessage, Layouts } from '../shared/protocol';
 import { applyDiagramEdit } from '../core/edits';
-import { getNativeTemplate } from '../core/templates';
+import { starterSource } from '../core/templates';
 import { mergeLayoutPositions } from '../host/messages';
 import { MAX_SOURCE_BYTES, validateSource } from '../core/layout-file';
+import { toBase64 } from './export';
 
 declare global {
   interface Window {
@@ -16,6 +17,11 @@ declare global {
 
 const vscode = window.acquireVsCodeApi?.();
 export const isStandalone = !vscode;
+/** Per-editor view choices that are not part of the document, such as the family of a blank diagram. */
+export interface ViewState { kinds?: Record<string, DiagramKind>; /** False once snapping was switched off in the toolbar. */ snap?: boolean }
+let viewState: ViewState = (vscode?.getState() as ViewState | undefined) ?? {};
+export const loadViewState = (): ViewState => viewState;
+export function saveViewState(state: ViewState): void { viewState = { ...viewState, ...state }; vscode?.setState(viewState); }
 export let isFilePreview = !vscode && window.__ALIOT_PREVIEW_MODEL__ === true;
 export type BridgeMessage = HostMessage | { type: 'connection'; connected: boolean } | { type: 'documentOpened' };
 const listeners = new Set<(message: BridgeMessage) => void>();
@@ -36,7 +42,7 @@ const acceptPreviewMessage = (message: HostMessage) => {
     source = message.source; version = message.version; fileName = message.fileName;
     layouts = { ...message.layouts };
     for (const pending of pendingLayouts) if (pending.version === undefined || pending.version === message.version) {
-      layouts[pending.diagramId] = mergeLayoutPositions(layouts[pending.diagramId] ?? { positions: {} }, pending.layout, pending.basePositions);
+      layouts[pending.diagramId] = mergeLayoutPositions(layouts[pending.diagramId] ?? { positions: {} }, pending.layout, pending.basePositions, pending.baseBends);
     }
     emit({ ...message, layouts });
     return;
@@ -46,11 +52,11 @@ const acceptPreviewMessage = (message: HostMessage) => {
 let source = window.__ALIOT_INITIAL_SOURCE__ ?? '@startuml\ntitle Order management\nclass "Order" as Order {\n  + id: UUID\n  + status: OrderStatus\n  + submit()\n}\nclass "Line item" as LineItem {\n  + quantity: int\n  + unitPrice: Money\n}\nclass "Customer" as Customer {\n  + name: String\n  + email: String\n}\nOrder *-- LineItem : contains\nCustomer --> Order : places\n@enduml\n';
 let version = 1;
 let layouts: Layouts = {};
-interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; kind: 'source' | 'document' | 'layout' }
+interface HistorySnapshot { source: string; layouts: Layouts; fileName: string; kind: 'source' | 'document' | 'layout'; /** A placement that completes the source edit before it; the pair is one step. */ linked?: boolean }
 const undo: HistorySnapshot[] = [];
 const redo: HistorySnapshot[] = [];
 const documentMessage = (): HostMessage => ({ type: 'document', source, version, layouts, trusted: true, fileName });
-const historySnapshot = (kind: HistorySnapshot['kind'] = 'source'): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, kind });
+const historySnapshot = (kind: HistorySnapshot['kind'] = 'source', linked = false): HistorySnapshot => ({ source, layouts: structuredClone(layouts), fileName, kind, linked });
 function restoreHistory(snapshot: HistorySnapshot) {
   if (snapshot.kind !== 'layout' || source !== snapshot.source) version++;
   source = snapshot.source; layouts = snapshot.layouts; fileName = snapshot.fileName;
@@ -66,11 +72,21 @@ export function downloadSource(): void {
 
 function downloadText(content: string) {
   const name = fileName.replace(/^.*[\\/]/, '') || 'diagram.puml';
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  downloadBlob(/\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`, new Blob([content], { type: 'text/plain;charset=utf-8' }));
+}
+
+function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url; link.download = /\.(?:puml|plantuml|pu|iuml)$/i.test(name) ? name : `${name}.puml`; link.style.display = 'none';
+  link.href = url; link.download = name; link.style.display = 'none';
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** VS Code asks where to save an exported image; the browser previews download it like any file. */
+export async function saveExport(name: string, format: ExportFormat, content: string | Blob): Promise<void> {
+  if (vscode) { vscode.postMessage({ type: 'export', format, name, data: typeof content === 'string' ? content : await toBase64(content) }); return; }
+  downloadBlob(name, typeof content === 'string' ? new Blob([content], { type: 'image/svg+xml' }) : content);
 }
 
 /** Browser preview only: open a local PlantUML file as an independent document. */
@@ -115,7 +131,7 @@ export function send(message: WebviewMessage): void {
   if (isFilePreview) {
     const epoch = connectionEpoch;
     if (message.type === 'layout') {
-      layouts = { ...layouts, [message.diagramId]: mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions) };
+      layouts = { ...layouts, [message.diagramId]: mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends) };
       pendingLayouts.add(message);
     }
     if (message.type === 'ready' && !eventStream) {
@@ -165,25 +181,37 @@ export function send(message: WebviewMessage): void {
         case 'ready': emit(documentMessage()); break;
         case 'edit': {
           if (message.version !== version) throw new Error('The document changed while you were editing. Your draft is still available; review it against the current source before applying again.');
-          const next = applyDiagramEdit(source, message.diagramId, message.edit);
+          const next = applyDiagramEdit(source, message.diagramId, message.edit, { kind: message.kind });
           if (next !== source) { undo.push(historySnapshot()); redo.length = 0; source = next; version++; }
           emit(documentMessage()); break;
         }
         case 'layout': {
           if (message.version !== undefined && message.version !== version) throw new Error('The document changed before the layout could be saved.');
-          const next = mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions);
-          if (JSON.stringify(layouts[message.diagramId]?.positions ?? {}) !== JSON.stringify(next.positions)) { undo.push(historySnapshot('layout')); redo.length = 0; }
+          const next = mergeLayoutPositions(layouts[message.diagramId] ?? { positions: {} }, message.layout, message.basePositions, message.baseBends);
+          const placement = (layout?: Layouts[string]) => JSON.stringify([layout?.positions ?? {}, layout?.bends ?? {}]);
+          if (placement(layouts[message.diagramId]) !== placement(next)) { undo.push(historySnapshot('layout', message.linked === true && undo.length > 0)); redo.length = 0; }
           layouts = { ...layouts, [message.diagramId]: next }; break;
         }
         case 'create': {
-          const template = getNativeTemplate(message.kind);
-          if (!template) throw new Error('This diagram type does not have a native editor yet.');
+          const starter = starterSource(message.kind, message.blank);
+          if (!starter) throw new Error('This diagram type does not have a native editor yet.');
           undo.push(historySnapshot('document')); redo.length = 0;
-          source = template.source; version++; layouts = {}; fileName = `${template.kind}.puml`;
+          source = starter; version++; layouts = {}; fileName = `${message.kind}.puml`;
           emit(documentMessage()); break;
         }
-        case 'undo': if (undo.length) { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;
-        case 'redo': if (redo.length) { const snapshot = redo.pop()!; undo.push(historySnapshot(snapshot.kind)); restoreHistory(snapshot); } break;
+        case 'undo': {
+          const step = (linked: boolean) => { const snapshot = undo.pop()!; redo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
+          // Every placement that completed the source edit, then the edit.
+          while (undo.at(-1)?.linked) step(true);
+          if (undo.length) step(false);
+          break;
+        }
+        case 'redo': {
+          const step = (linked: boolean) => { const snapshot = redo.pop()!; undo.push(historySnapshot(snapshot.kind, linked)); restoreHistory(snapshot); };
+          if (redo.length) step(false);
+          while (redo.at(-1)?.linked) step(true);
+          break;
+        }
         case 'openSource': break;
       }
     } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }

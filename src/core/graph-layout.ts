@@ -4,8 +4,19 @@ import { measureLabel } from './label-metrics';
 import { clearCompoundSightlines } from './compound-layout';
 
 interface Size { width: number; height: number }
-interface Layout extends Size { points: Record<string, Point> }
-interface Link { source: string; target: string; axis: 'x' | 'y'; clearance?: number; sourceOffset?: number; targetOffset?: number }
+/** A bend sequence for one relationship, contributed by one nesting level. */
+interface RouteFragment { relation: DiagramRelation; side: 'source' | 'common' | 'target'; depth: number; points: Point[] }
+interface Layout extends Size { points: Record<string, Point>; routes: RouteFragment[] }
+interface Link {
+  source: string; target: string; axis: 'x' | 'y'; clearance?: number; sourceOffset?: number; targetOffset?: number;
+  /** The relationship this link ranks; absent for invisible ordering constraints. */
+  relation?: DiagramRelation;
+  /** True when a direction hint or generalization swapped the ranked endpoints. */
+  flipped?: boolean;
+  side?: RouteFragment['side'];
+}
+const laneWidth = 18;
+const phantomPrefix = '\u0000outside:';
 const gap = 70;
 const siblingGap = 32;
 
@@ -82,20 +93,21 @@ function direction(block: DiagramBlock, relation: DiagramRelation, across: boole
     ?? span?.macro?.match(/_(Left|Right|Up|Down|L|R|U|D)$/i)?.[1]?.toLowerCase();
   let source = relation.source, target = relation.target;
   let axis: 'x' | 'y';
+  let flipped = false;
   if (block.kind === 'c4' && /_Neighbor$/i.test(span?.macro ?? '')) {
     axis = across ? 'y' : 'x';
   } else if (hint) {
     axis = /^[lr]/.test(hint) ? 'x' : 'y';
-    if (/^[lu]/.test(hint)) [source, target] = [target, source];
+    if (/^[lu]/.test(hint)) { [source, target] = [target, source]; flipped = true; }
   } else {
     // PlantUML's short graph links occupy one rank (the state gallery uses ->).
     const short = block.kind !== 'dot' && (arrow.match(/[-.=]/g)?.length ?? 0) === 1;
     axis = across !== short ? 'x' : 'y';
     // A generalization points to its parent, which belongs above its descendants.
-    if (/[.=-]+\|>$/.test(arrow)) [source, target] = [target, source];
+    if (/[.=-]+\|>$/.test(arrow)) { [source, target] = [target, source]; flipped = true; }
   }
   const clearance = axis === 'x' && relation.label ? Math.max(90, measureLabel(relation.label, 240, 10).width + 40) : gap;
-  return { source, target, axis, clearance };
+  return { source, target, axis, clearance, relation, flipped, side: 'common' };
 }
 
 /** Stable union and ranking; feedback edges do not pull an entire cycle into one row. */
@@ -119,9 +131,24 @@ function ranks(ids: string[], links: Link[], main: 'x' | 'y'): Map<string, numbe
     }
     state.set(id, 2); order.push(id);
   };
+  // Start at the natural roots, so a cycle is cut at its feedback edge instead
+  // of wherever the first declared element happens to sit.
+  const targeted = new Set([...outgoing.values()].flat());
+  for (const id of groups) if (!targeted.has(id) && !state.has(id)) visit(id);
   groups.forEach(id => { if (!state.has(id)) visit(id); });
   const levels = new Map(groups.map(id => [id, 0]));
-  for (const id of order.reverse()) for (const target of forward.get(id) ?? []) levels.set(target, Math.max(levels.get(target)!, levels.get(id)! + 1));
+  const topological = order.reverse();
+  for (const id of topological) for (const target of forward.get(id) ?? []) levels.set(target, Math.max(levels.get(target)!, levels.get(id)! + 1));
+  // Longest-path ranking strands roots at the top. Sink each one toward its
+  // successors while that shortens more links than it stretches.
+  const inbound = new Map(groups.map(id => [id, 0]));
+  for (const targets of forward.values()) for (const target of targets) inbound.set(target, inbound.get(target)! + 1);
+  for (const id of [...topological].reverse()) {
+    const targets = forward.get(id) ?? [];
+    if (!targets.length || targets.length <= inbound.get(id)!) continue;
+    const limit = Math.min(...targets.map(target => levels.get(target)!)) - 1;
+    if (limit > levels.get(id)!) levels.set(id, limit);
+  }
   return new Map(ids.map(id => [id, levels.get(find(id))!]));
 }
 
@@ -179,21 +206,116 @@ function compactChains(chains: Chain[], preferred: number[], weights: number[], 
   return values.map((value, index) => value + minimum[index]);
 }
 
-function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>, across: boolean): Layout {
+/**
+ * Order every rank so that links between neighbouring ranks cross as little as possible:
+ * barycentre sweeps down and up, keeping the best order seen, then swaps of neighbours
+ * while a swap still removes a crossing. Positions are assigned afterwards and keep this order.
+ */
+function reduceCrossings(layers: Chain[][], links: Link[], crossSize: (id: string) => number): void {
+  if (layers.length < 2) return;
+  const chainOf = new Map<string, Chain>(), layerOf = new Map<Chain, number>(), index = new Map<Chain, number>();
+  layers.forEach((layer, at) => layer.forEach((chain, position) => { layerOf.set(chain, at); index.set(chain, position); for (const id of chain.ids) chainOf.set(id, chain); }));
+  // Where along its chain a link attaches, as a fraction: a row of same-rank boxes or a
+  // container is one slot in its rank, but its links leave from different places along it.
+  const along = (chain: Chain, id: string, offset = 0) => chain.width > 0 ? Math.max(0, Math.min(.999, (chain.offsets.get(id)! + crossSize(id) / 2 + offset) / chain.width)) : .5;
+  // between[i] joins layer i (first of each pair) to layer i + 1.
+  type Pair = [upper: Chain, lower: Chain, upperAt: number, lowerAt: number];
+  const between: Pair[][] = layers.map(() => []);
+  for (const edge of links) {
+    const a = chainOf.get(edge.source), b = chainOf.get(edge.target);
+    if (!a || !b) continue;
+    const from = layerOf.get(a)!, to = layerOf.get(b)!, sourceAt = along(a, edge.source, edge.sourceOffset), targetAt = along(b, edge.target, edge.targetOffset);
+    if (Math.abs(from - to) === 1) between[Math.min(from, to)].push(from < to ? [a, b, sourceAt, targetAt] : [b, a, targetAt, sourceAt]);
+  }
+  if (!between.some(pairs => pairs.length > 1)) return;
+  const crossings = (at: number): number => {
+    const pairs = between[at]; let count = 0;
+    if (!pairs) return 0;
+    for (let a = 0; a < pairs.length; a++) for (let b = a + 1; b < pairs.length; b++) {
+      const upper = index.get(pairs[a][0])! + pairs[a][2] - index.get(pairs[b][0])! - pairs[b][2], lower = index.get(pairs[a][1])! + pairs[a][3] - index.get(pairs[b][1])! - pairs[b][3];
+      if (upper * lower < 0) count++;
+    }
+    return count;
+  };
+  const total = () => between.reduce((sum, _pairs, at) => sum + crossings(at), 0);
+  const place = (at: number, order: Chain[]) => { layers[at] = order; order.forEach((chain, position) => index.set(chain, position)); };
+  // A rank is ordered by where its neighbours sit in the rank that was ordered just before it.
+  const sweep = (at: number, toward: -1 | 1) => {
+    const pairs = between[toward < 0 ? at - 1 : at];
+    if (!pairs?.length) return;
+    const sums = new Map<Chain, { sum: number; count: number }>();
+    for (const [upper, lower, upperAt, lowerAt] of pairs) {
+      const [own, other, otherAt] = toward < 0 ? [lower, upper, upperAt] : [upper, lower, lowerAt], entry = sums.get(own) ?? { sum: 0, count: 0 };
+      entry.sum += index.get(other)! + otherAt; entry.count++; sums.set(own, entry);
+    }
+    const centre = (chain: Chain) => sums.get(chain)!.sum / sums.get(chain)!.count;
+    const linked = layers[at].filter(chain => sums.has(chain)).sort((a, b) => centre(a) - centre(b) || index.get(a)! - index.get(b)!);
+    let next = 0;
+    // Chains without a neighbour on that side keep their slot.
+    place(at, layers[at].map(chain => sums.has(chain) ? linked[next++] : chain));
+  };
+  let best = total(), kept = layers.map(layer => [...layer]);
+  for (let round = 0; round < 12 && best > 0; round++) {
+    for (let at = 1; at < layers.length; at++) sweep(at, -1);
+    for (let at = layers.length - 2; at >= 0; at--) sweep(at, 1);
+    const now = total();
+    if (now < best) { best = now; kept = layers.map(layer => [...layer]); }
+  }
+  kept.forEach((order, at) => place(at, order));
+  // Bounded: each accepted swap removes at least one crossing.
+  for (let round = 0, improved = true; improved && round < 20 && best > 0; round++) {
+    improved = false;
+    for (let at = 0; at < layers.length; at++) for (let position = 0; position + 1 < layers[at].length; position++) {
+      const before = crossings(at - 1) + crossings(at), order = [...layers[at]];
+      [order[position], order[position + 1]] = [order[position + 1], order[position]];
+      const previous = layers[at];
+      place(at, order);
+      if (crossings(at - 1) + crossings(at) < before) improved = true; else place(at, previous);
+    }
+  }
+}
+
+function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>, across: boolean, depth: number): Layout {
   const main = across ? 'x' : 'y', cross = across ? 'y' : 'x';
   const levels = ranks(ids, links, main);
+  // Outside neighbours sit beyond every rank of this scope, so a relationship that
+  // leaves the container gets a lane through each rank between its end and the border.
+  const inside = ids.filter(id => !id.startsWith(phantomPrefix)).map(id => levels.get(id)!);
+  if (inside.length !== ids.length && inside.length) {
+    const first = Math.min(...inside), last = Math.max(...inside);
+    for (const id of ids) if (id.startsWith(phantomPrefix)) levels.set(id, id.startsWith(`${phantomPrefix}from:`) ? first - 1 : last + 1);
+  }
   // Perpendicular fan links are alignment preferences, not equalities: unioning them
   // destroys the explicit ordering of an entire horizontal or vertical pipeline.
-  const crossLinks = links.filter(edge => edge.axis === cross), mainLinks = links.filter(edge => edge.axis === main);
+  const crossLinks = links.filter(edge => edge.axis === cross);
+  // A link that skips ranks gets a narrow lane in every rank it passes, so it is
+  // routed between the boxes there instead of straight through them.
+  const lanes = new Set<string>(), mainLinks: Link[] = [], routed: { link: Link; lanes: string[] }[] = [];
+  const all = [...ids];
+  for (const link of links.filter(edge => edge.axis === main)) {
+    const from = levels.get(link.source)!, to = levels.get(link.target)!;
+    if (Math.abs(to - from) <= 1) { mainLinks.push(link); continue; }
+    const step = to > from ? 1 : -1, chain: string[] = [];
+    let previous = link.source;
+    for (let rank = from + step; rank !== to; rank += step) {
+      const id = `\u0000lane:${routed.length}:${rank}`;
+      lanes.add(id); all.push(id); levels.set(id, rank); chain.push(id);
+      mainLinks.push({ source: previous, target: id, axis: main, sourceOffset: previous === link.source ? link.sourceOffset : 0 });
+      previous = id;
+    }
+    mainLinks.push({ source: previous, target: link.target, axis: main, targetOffset: link.targetOffset, clearance: link.clearance });
+    routed.push({ link, lanes: chain });
+  }
+  const size = (id: string): Size => lanes.has(id) ? { width: across ? 0 : laneWidth, height: across ? laneWidth : 0 } : sizes.get(id)!;
   const crossRanks = ranks(ids, crossLinks, cross);
   const layers = new Map<number, string[]>();
-  for (const id of ids) { const rank = levels.get(id)!; layers.set(rank, [...layers.get(rank) ?? [], id]); }
-  const mainSize = (id: string) => across ? sizes.get(id)!.width : sizes.get(id)!.height;
-  const crossSize = (id: string) => across ? sizes.get(id)!.height : sizes.get(id)!.width;
-  const ordered = [...layers.entries()].sort(([a], [b]) => a - b).map(([, layer]) => {
+  for (const id of all) { const rank = levels.get(id)!; layers.set(rank, [...layers.get(rank) ?? [], id]); }
+  const mainSize = (id: string) => across ? size(id).width : size(id).height;
+  const crossSize = (id: string) => across ? size(id).height : size(id).width;
+  const ordered = [...layers.entries()].sort(([a], [b]) => a - b).map(([rank, layer]) => {
     const constraints = crossLinks.filter(edge => layer.includes(edge.source) && layer.includes(edge.target));
-    return connected(layer, constraints).map((members, order): Chain => {
-      const chainIds = members.sort((a, b) => crossRanks.get(a)! - crossRanks.get(b)! || ids.indexOf(a) - ids.indexOf(b));
+    return { rank, chains: connected(layer, constraints).map((members, order): Chain => {
+      const chainIds = members.sort((a, b) => (crossRanks.get(a) ?? 0) - (crossRanks.get(b) ?? 0) || all.indexOf(a) - all.indexOf(b));
       const offsets = new Map<string, number>(); let width = 0;
       chainIds.forEach((id, index) => {
         offsets.set(id, width); width += crossSize(id);
@@ -201,22 +323,29 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
         if (next) width += Math.max(gap, ...constraints.filter(edge => edge.source === id && edge.target === next || edge.source === next && edge.target === id).map(edge => edge.clearance ?? gap));
       });
       return { ids: chainIds, offsets, width, start: 0, order };
-    });
+    }) };
   });
+  const sequence = ordered.map(layer => layer.chains);
+  reduceCrossings(sequence, mainLinks, crossSize);
+  ordered.forEach((layer, at) => { layer.chains = sequence[at]; });
   const points: Record<string, Point> = Object.create(null);
-  const broadest = Math.max(0, ...ordered.map(chains => chains.reduce((sum, chain) => sum + chain.width, 0) + (chains.length - 1) * siblingGap));
+  const bands = new Map<number, { start: number; depth: number }>();
+  const broadest = Math.max(0, ...ordered.map(({ chains }) => chains.reduce((sum, chain) => sum + chain.width, 0) + (chains.length - 1) * siblingGap));
   let offset = 0;
-  for (const chains of ordered) {
-    const layer = chains.flatMap(chain => chain.ids), depth = Math.max(...layer.map(mainSize));
+  for (const { rank, chains } of ordered) {
+    const layer = chains.flatMap(chain => chain.ids), bandDepth = Math.max(...layer.map(mainSize));
     const extent = chains.reduce((sum, chain) => sum + chain.width, 0) + (chains.length - 1) * siblingGap;
     let cursor = (broadest - extent) / 2;
     for (const chain of chains) {
       chain.start = cursor;
-      for (const id of chain.ids) points[id] = { [main]: offset + (depth - mainSize(id)) / 2, [cross]: cursor + chain.offsets.get(id)! } as unknown as Point;
+      for (const id of chain.ids) points[id] = { [main]: offset + (bandDepth - mainSize(id)) / 2, [cross]: cursor + chain.offsets.get(id)! } as unknown as Point;
       cursor += chain.width + siblingGap;
     }
-    const rankClearance = main === 'x' ? Math.max(gap, ...mainLinks.filter(edge => layer.includes(edge.source) && !layer.includes(edge.target)).map(edge => edge.clearance ?? gap)) : gap;
-    offset += depth + rankClearance;
+    bands.set(rank, { start: offset, depth: bandDepth });
+    const leaving = mainLinks.filter(edge => { const from = levels.get(edge.source)!, to = levels.get(edge.target)!; return Math.min(from, to) === rank && Math.max(from, to) === rank + 1; });
+    // A label needs room between two rows as well as between two columns.
+    const rankClearance = main === 'x' ? Math.max(gap, ...leaving.map(edge => edge.clearance ?? gap)) : leaving.some(edge => edge.relation?.label) ? gap + 26 : gap;
+    offset += bandDepth + rankClearance;
   }
   const center = (id: string) => points[id][cross] + crossSize(id) / 2;
   const attachments = (chain: Chain) => mainLinks.flatMap(edge => {
@@ -229,17 +358,17 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
   });
   // Keep the strongest directed chain rigid while balancing its surrounding rows.
   // A fan may move a row toward the chain, but cannot pull one end away from it.
-  const strength = (chain: Chain) => [crossLinks.filter(edge => chain.offsets.has(edge.source) && chain.offsets.has(edge.target)).length, attachments(chain).length, chain.width];
-  const anchor = ordered.flat().reduce<Chain | undefined>((best, chain) => {
+  const real = (chain: Chain) => chain.ids.some(id => !lanes.has(id) && !id.startsWith(phantomPrefix));
+  const strength = (chain: Chain) => [real(chain) ? 1 : 0, crossLinks.filter(edge => chain.offsets.has(edge.source) && chain.offsets.has(edge.target)).length, attachments(chain).length, chain.width];
+  const anchor = ordered.flatMap(layer => layer.chains).reduce<Chain | undefined>((best, chain) => {
     if (!best) return chain;
     const previous = strength(best), next = strength(chain);
     for (let index = 0; index < next.length; index++) { if (next[index] > previous[index]) return chain; if (next[index] < previous[index]) return best; }
     return best;
   }, undefined);
   for (let pass = 0; pass < 8; pass++) {
-    for (const chains of pass % 2 ? [...ordered].reverse() : ordered) {
+    for (const { chains } of pass % 2 ? [...ordered].reverse() : ordered) {
       const preferences = new Map(chains.map(chain => { const neighbors = attachments(chain); return [chain, { start: chain === anchor || !neighbors.length ? chain.start : median(neighbors), weight: Math.max(1, Math.min(5, neighbors.length)) }]; }));
-      chains.sort((a, b) => preferences.get(a)!.start + a.width / 2 - preferences.get(b)!.start - b.width / 2 || a.order - b.order);
       const starts = compactChains(chains, chains.map(chain => preferences.get(chain)!.start), chains.map(chain => preferences.get(chain)!.weight), chains.includes(anchor!) ? anchor : undefined);
       chains.forEach((chain, index) => {
         chain.start = starts[index];
@@ -247,16 +376,72 @@ function arrangeComponent(ids: string[], links: Link[], sizes: Map<string, Size>
       });
     }
   }
-  const minX = Math.min(...ids.map(id => points[id].x)), minY = Math.min(...ids.map(id => points[id].y));
-  for (const id of ids) { points[id].x -= minX; points[id].y -= minY; }
-  return { points, width: Math.max(...ids.map(id => points[id].x + sizes.get(id)!.width)), height: Math.max(...ids.map(id => points[id].y + sizes.get(id)!.height)) };
+  const laneBends = new Map(routed.map(({ link, lanes: chain }) => [link, chain.flatMap(id => {
+    const band = bands.get(levels.get(id)!)!, at = center(id);
+    const enter = { [main]: band.start, [cross]: at } as unknown as Point, leave = { [main]: band.start + band.depth, [cross]: at } as unknown as Point;
+    const pair = levels.get(link.target)! > levels.get(link.source)! ? [enter, leave] : [leave, enter];
+    return band.depth < 1 ? [pair[0]] : pair;
+  })]));
+  // A link to a box far along the next rank leaves at a shallow angle and would cut through its own
+  // neighbours. It first steps clear of its rank, crosses in the gap between ranks, then steps in.
+  const solid = (id: string) => !lanes.has(id) && !id.startsWith(phantomPrefix);
+  const cuts = (a: Point, b: Point, rank: number, ends: string[]) => (layers.get(rank) ?? []).some(id => {
+    if (!solid(id) || ends.includes(id)) return false;
+    let from = 0, to = 1;
+    for (const [delta, low, high] of [[b.x - a.x, points[id].x - 4 - a.x, points[id].x + size(id).width + 4 - a.x], [b.y - a.y, points[id].y - 4 - a.y, points[id].y + size(id).height + 4 - a.y]]) {
+      if (Math.abs(delta) < 1e-9) { if (low >= 0 || high <= 0) return false; continue; }
+      from = Math.max(from, Math.min(low / delta, high / delta)); to = Math.min(to, Math.max(low / delta, high / delta));
+      if (from >= to) return false;
+    }
+    return true;
+  });
+  const clearance = Math.min(18, gap / 4);
+  const routes: RouteFragment[] = links.filter(link => link.axis === main && link.relation && levels.get(link.source) !== levels.get(link.target)).flatMap(link => {
+    const down = levels.get(link.target)! > levels.get(link.source)!, ends = [link.source, link.target], bends = [...laneBends.get(link) ?? []];
+    const at = (id: string, offset = 0) => ({ [main]: points[id][main] + mainSize(id) / 2, [cross]: center(id) + offset }) as unknown as Point;
+    const beside = (id: string, point: Point, leaving: boolean) => { const band = bands.get(levels.get(id)!)!; return { [main]: leaving === down ? band.start + band.depth + clearance : band.start - clearance, [cross]: point[cross] } as unknown as Point; };
+    const start = at(link.source, link.sourceOffset), end = at(link.target, link.targetOffset);
+    const leaving = (toward: Point) => solid(link.source) && cuts(start, toward, levels.get(link.source)!, ends) ? beside(link.source, start, true) : undefined;
+    let leave = leaving(bends[0] ?? end);
+    const arrive = solid(link.target) && cuts(bends.at(-1) ?? leave ?? start, end, levels.get(link.target)!, ends) ? beside(link.target, end, false) : undefined;
+    // Stepping in at the far end changes the angle at this one.
+    if (!leave && arrive && !bends.length) leave = leaving(arrive);
+    const path = [...(leave ? [leave] : []), ...bends, ...(arrive ? [arrive] : [])];
+    return path.length ? [{ relation: link.relation!, side: link.side ?? 'common', depth, points: link.flipped ? path.reverse() : path }] : [];
+  });
+  // Outside neighbours only steer this scope; they are not part of its extent.
+  const kept = all.filter(id => !id.startsWith(phantomPrefix));
+  for (const id of all) if (id.startsWith(phantomPrefix)) delete points[id];
+  const minX = Math.min(...kept.map(id => points[id].x)), minY = Math.min(...kept.map(id => points[id].y));
+  for (const id of kept) { points[id].x -= minX; points[id].y -= minY; }
+  for (const route of routes) for (const point of route.points) { point.x -= minX; point.y -= minY; }
+  const layout = { points, routes, width: Math.max(...kept.map(id => points[id].x + size(id).width)), height: Math.max(...kept.map(id => points[id].y + size(id).height)) };
+  for (const id of lanes) delete points[id];
+  return layout;
+}
+
+/** Flow independent groups into rows (or columns for left-to-right diagrams). */
+function pack(components: Layout[], across: boolean, single: boolean): { offsets: Point[]; width: number; height: number } {
+  const length = (layout: Layout) => across ? layout.height : layout.width, breadth = (layout: Layout) => across ? layout.width : layout.height;
+  const area = components.reduce((sum, layout) => sum + (layout.width + gap) * (layout.height + gap), 0);
+  const limit = single ? Infinity : Math.max(...components.map(length), Math.sqrt(area) * 1.5);
+  const offsets: Point[] = [];
+  let cursor = 0, line = 0, lineBreadth = 0, extent = 0;
+  for (const component of components) {
+    if (cursor > 0 && cursor + length(component) > limit) { cursor = 0; line += lineBreadth + gap; lineBreadth = 0; }
+    offsets.push(across ? { x: line, y: cursor } : { x: cursor, y: line });
+    extent = Math.max(extent, cursor + length(component));
+    cursor += length(component) + gap; lineBreadth = Math.max(lineBreadth, breadth(component));
+  }
+  return across ? { offsets, width: line + lineBreadth, height: extent } : { offsets, width: extent, height: line + lineBreadth };
 }
 
 /** Native layered graph layout, including topology inside and between nested containers. */
 export function layoutGraph(block: DiagramBlock): Record<string, Point> {
   const across = horizontal(block), elements = new Map(block.elements.map(element => [element.id, element]));
   const sizes = new Map<string, Size>(), nested = new Map<string, Layout>();
-  const allLinks = block.relations.map(edge => direction(block, edge, across));
+  for (const relation of block.relations) if (relation.meta) { delete relation.meta.route; delete relation.meta.routeAnchor; }
+  const allLinks = block.relations.filter(edge => elements.has(edge.source) && elements.has(edge.target)).map(edge => direction(block, edge, across));
   // C4's Lay_* macros are invisible ordering constraints, not visible relationships.
   for (const line of layoutDirectives(block)) {
     const match = line.match(/^\s*Lay_(L|R|U|D)\s*\(\s*([\w.]+)\s*,\s*([\w.]+)\s*\)/i);
@@ -267,12 +452,34 @@ export function layoutGraph(block: DiagramBlock): Record<string, Point> {
     while (!roots.has(id)) { if (seen.has(id)) return; seen.add(id); const parent = elements.get(id)?.parentId; if (!parent) return; id = parent; }
     return id;
   };
-  const scope = (parentId?: string): Layout => {
-    const group = block.elements.filter(element => parentId ? element.parentId === parentId : !element.parentId || !elements.has(element.parentId));
-    if (!group.length) return { points: Object.create(null), width: 0, height: 0 };
+  const main = across ? 'x' : 'y';
+  const groups = new Map<string | undefined, DiagramElement[]>();
+  for (const element of block.elements) { const parent = element.parentId && elements.has(element.parentId) ? element.parentId : undefined; groups.set(parent, [...groups.get(parent) ?? [], element]); }
+  const siblings = new Map([...groups].map(([parent, group]) => [parent, new Set(group.map(element => element.id))]));
+  // Ranks depend on topology alone, so every scope's order is known before any box is sized.
+  const scopeRank = new Map<string, number>();
+  for (const roots of siblings.values()) {
+    const inner = allLinks.flatMap(edge => { const source = ancestor(edge.source, roots), target = ancestor(edge.target, roots); return source && target && source !== target ? [{ ...edge, source, target }] : []; });
+    for (const [id, level] of ranks([...roots], inner, main)) scopeRank.set(id, level);
+  }
+  /** Whether an outside element ends up before (-1) or after (1) this container along the flow. */
+  const sideOf = (container: string, outside: string): number => {
+    const seen = new Set<string>();
+    for (let current: string | undefined = container; current && !seen.has(current);) {
+      seen.add(current);
+      const parent: string | undefined = elements.get(current)?.parentId && elements.has(elements.get(current)!.parentId!) ? elements.get(current)!.parentId : undefined;
+      const other = ancestor(outside, siblings.get(parent)!);
+      if (other && other !== current) return Math.sign(scopeRank.get(other)! - scopeRank.get(current)!);
+      current = parent;
+    }
+    return 0;
+  };
+  const scope = (parentId?: string, depth = 0): Layout => {
+    const group = groups.get(parentId) ?? [];
+    if (!group.length) return { points: Object.create(null), routes: [], width: 0, height: 0 };
     for (const element of group) {
       if (element.meta?.container) {
-        const children = scope(element.id); nested.set(element.id, children);
+        const children = scope(element.id, depth + 1); nested.set(element.id, children);
         const size = { width: Math.max(260, children.width + 60), height: Math.max(150, children.height + 100) };
         sizes.set(element.id, size); element.meta = { ...element.meta, ...size };
       } else {
@@ -288,28 +495,72 @@ export function layoutGraph(block: DiagramBlock): Record<string, Point> {
       if (!point || !size || !rootSize) return 0;
       return across ? point.y + 70 + size.height / 2 - rootSize.height / 2 : point.x + 30 + size.width / 2 - rootSize.width / 2;
     };
-    const links = allLinks.flatMap(edge => {
+    const links = allLinks.flatMap((edge): Link[] => {
       const source = ancestor(edge.source, roots), target = ancestor(edge.target, roots);
-      return source && target && source !== target ? [{ ...edge, source, target, sourceOffset: attachmentOffset(edge.source, source), targetOffset: attachmentOffset(edge.target, target) }] : [];
+      if (source && target) return source !== target ? [{ ...edge, source, target, sourceOffset: attachmentOffset(edge.source, source), targetOffset: attachmentOffset(edge.target, target) }] : [];
+      // A relationship leaving this container still decides which of its children
+      // sit on the near side, so the far endpoint takes part as a sizeless neighbour.
+      if (!parentId || edge.axis !== main || !source && !target) return [];
+      // Where the far end really sits decides the side: a feedback link enters from below
+      // although it points at this container, so the arrow's direction alone would mislead.
+      const inner = (source ?? target)!, far = source ? edge.target : edge.source, where = sideOf(parentId, far);
+      if (!where) return [];
+      const outside = `${phantomPrefix}${where < 0 ? 'from' : 'to'}:${far}`, offset = attachmentOffset(source ? edge.source : edge.target, inner);
+      sizes.set(outside, { width: 0, height: 0 });
+      // The ranked source is the relationship's target when a hint flipped it.
+      const startsInside = Boolean(source) !== Boolean(edge.flipped);
+      // Bends are produced along the flow; the relationship may run against it.
+      const flipped = startsInside ? where < 0 : where > 0, side = startsInside ? 'source' : 'target';
+      return [where > 0 ? { ...edge, source: inner, target: outside, side, flipped, sourceOffset: offset, targetOffset: 0 } : { ...edge, source: outside, target: inner, side, flipped, sourceOffset: 0, targetOffset: offset }];
     });
-    const components = connected([...roots], links).map(ids => arrangeComponent(ids, links.filter(edge => ids.includes(edge.source) && ids.includes(edge.target)), sizes, across));
-    // PlantUML packs isolated symbols as a compact gallery; independent boundaries form a row.
-    const columns = group.every(element => element.meta?.container) ? components.length : Math.ceil(Math.sqrt(components.length));
-    const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...components.filter((_, index) => index % columns === column).map(component => component.width)));
-    const points: Record<string, Point> = Object.create(null);
-    let x = 0, y = 0, rowHeight = 0, width = 0;
+    const phantoms = [...new Set(links.flatMap(edge => [edge.source, edge.target]).filter(id => id.startsWith(phantomPrefix)))];
+    const parts = connected([...roots, ...phantoms], links);
+    const isolated = parts.filter(ids => ids.length === 1), linked = parts.filter(ids => ids.length > 1);
+    const components = linked.map(ids => arrangeComponent(ids, links.filter(edge => ids.includes(edge.source) && ids.includes(edge.target)), sizes, across, depth));
+    if (isolated.length) {
+      // PlantUML packs isolated symbols as a compact gallery; independent boundaries form a row.
+      const singles = isolated.map(([id]) => ({ id, ...sizes.get(id)! }));
+      const columns = singles.every(item => elements.get(item.id)?.meta?.container) ? singles.length : Math.ceil(Math.sqrt(singles.length));
+      const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...singles.filter((_, index) => index % columns === column).map(item => item.width)));
+      const gallery: Layout = { points: Object.create(null), routes: [], width: 0, height: 0 };
+      let x = 0, y = 0, rowHeight = 0;
+      singles.forEach((item, index) => {
+        if (index && index % columns === 0) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+        gallery.points[item.id] = { x, y };
+        gallery.width = Math.max(gallery.width, x + item.width); x += columnWidths[index % columns] + gap; rowHeight = Math.max(rowHeight, item.height);
+      });
+      gallery.height = y + rowHeight;
+      components.push(gallery);
+    }
+    const packed = pack(components, across, components.length === 1);
+    const points: Record<string, Point> = Object.create(null), routes: RouteFragment[] = [];
     components.forEach((component, index) => {
-      if (index && index % columns === 0) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+      const origin = packed.offsets[index];
+      for (const route of component.routes) { for (const point of route.points) { point.x += origin.x; point.y += origin.y; } routes.push(route); }
       for (const [id, point] of Object.entries(component.points)) {
-        points[id] = { x: x + point.x, y: y + point.y };
-        for (const [child, childPoint] of Object.entries(nested.get(id)?.points ?? {})) points[child] = { x: points[id].x + 30 + childPoint.x, y: points[id].y + 70 + childPoint.y };
+        points[id] = { x: origin.x + point.x, y: origin.y + point.y };
+        const inner = nested.get(id);
+        if (!inner) continue;
+        for (const [child, childPoint] of Object.entries(inner.points)) points[child] = { x: points[id].x + 30 + childPoint.x, y: points[id].y + 70 + childPoint.y };
+        for (const route of inner.routes) { for (const point of route.points) { point.x += points[id].x + 30; point.y += points[id].y + 70; } routes.push(route); }
       }
-      width = Math.max(width, x + component.width); x += columnWidths[index % columns] + gap; rowHeight = Math.max(rowHeight, component.height);
     });
-    return { points, width, height: y + rowHeight };
+    return { points, routes, width: packed.width, height: packed.height };
   };
-  const result = scope().points;
-  if (block.kind === 'c4' && (!block.meta?.lineType || ['straight', 'polyline'].includes(String(block.meta.lineType)))) clearCompoundSightlines(block, result, across, allLinks);
+  const { points: result, routes } = scope();
+  const compound = block.kind === 'c4' && (!block.meta?.lineType || ['straight', 'polyline'].includes(String(block.meta.lineType)));
+  if (compound) clearCompoundSightlines(block, result, across, allLinks);
   for (const point of Object.values(result)) { point.x += 80; point.y += 70; }
+  // The sightline pass moves whole subtrees afterwards, which invalidates lanes.
+  if (!compound) {
+    const order = (fragment: RouteFragment) => fragment.side === 'source' ? -fragment.depth - 1 : fragment.side === 'common' ? 0 : fragment.depth + 1;
+    const byRelation = new Map<DiagramRelation, RouteFragment[]>();
+    for (const fragment of routes) byRelation.set(fragment.relation, [...byRelation.get(fragment.relation) ?? [], fragment]);
+    for (const [relation, fragments] of byRelation) {
+      if (!result[relation.source] || !result[relation.target]) continue;
+      const bends = fragments.sort((a, b) => order(a) - order(b)).flatMap(fragment => fragment.points.map(point => ({ x: Math.round(point.x + 80), y: Math.round(point.y + 70) })));
+      relation.meta = { ...relation.meta, route: bends, routeAnchor: { source: { ...result[relation.source] }, target: { ...result[relation.target] } } };
+    }
+  }
   return result;
 }

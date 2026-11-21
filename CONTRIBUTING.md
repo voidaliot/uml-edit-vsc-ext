@@ -16,16 +16,18 @@ Press **F5** to launch an Extension Development Host, or open the standalone pre
 
 - `src/core/`: conservative PlantUML projection, source-span edits, layout, original templates. This layer has no VS Code or React dependency.
 - `src/core/layout-file.ts`: the `<diagram>.layout.json` codec for manual placements. `schemas/layout.schema.json` and `docs/layout-file-format.md` describe its public format.
+- `src/core/kinds.ts`: the family lists the declaration-patching edits share.
+- `src/core/clipboard.ts`, `properties.ts`, `relation-edits.ts`, `containment.ts`: the source patches behind paste, element properties, connect/re-attach, and moving a declaration between containers.
 - `src/core/families/`: data, architecture and time adapters sharing the `NativeFamily` parse/edit/layout contract; `activities.ts`, `legacy-activity.ts`, `sequence.ts` and `procedures.ts` handle richer UML constructs.
 - `src/shared/`: typed host/webview protocol and diagram data structures.
 - `src/host/`: message validation and source-version checks.
 - `src/extension.ts`: custom text editor provider, native document edits, layout files, the shared undo/redo history and commands.
-- `src/webview/`: React Flow canvas, UML shapes and markers, inline forms, source editor and template gallery.
+- `src/webview/`: React Flow canvas, UML shapes and markers, inline forms, source editor and template gallery. `arrange.ts` holds the pure placement helpers (container bounds, free spots, alignment, snapping); `dragAssist.tsx` the drag session that previews moves between containers; `export.ts` the SVG/PNG export; `clipboard.ts`, `panels.tsx` and `QuickConnect.tsx` the clipboard, properties and connect-to-new-element UI; `connections.ts` and `routing.ts` choose ports and draw connectors, including the bends `graph-layout.ts` reserves for links that skip ranks.
 - `test/`: core and host regression tests; `test/web/`: browser interaction tests; `test/native/`: extension host smoke tests.
 
 Keep `.puml` source authoritative. Prefer narrow text-span edits and retain comments, aliases, directives, EOLs, and unrelated blocks. Reject ambiguous edits. Unsupported syntax must be identified explicitly with its source retained. Do not introduce a PlantUML/Java renderer, generated diagram images, or a remote rendering fallback. Changes to versioned edit handling need conflict tests.
 
-Placement never changes the PlantUML file; it lives in the companion layout file, which is written only when something is placed manually and removed when nothing is. Keep source-edit versions stable across geometry-only changes, and merge position changes against their supplied baseline so independent split-view drags survive. Source and placement share one history: placement steps are recorded with the source text they were made on, and source steps are VS Code's native undo stack. Changes to that history need native host tests (`npm run test:native`).
+Placement never changes the PlantUML file; it lives in the companion layout file, which is written only when something is placed manually and removed when nothing is. Keep source-edit versions stable across geometry-only changes, and merge position changes against their supplied baseline so independent split-view drags survive. Source and placement share one history: placement steps are recorded with the source text they were made on, and source steps are VS Code's native undo stack. A layout message marked `linked` completes the source edit made just before it, and the three hosts undo and redo the pair as one step. Changes to that history need native host tests (`npm run test:native`).
 
 Add native support by extending `src/core/coverage.ts`, detection/projection, source-edit rules, a diagram-specific palette, shape/layout behavior, and round-trip tests together. New families register through `families/registry.ts`; the gallery and example checks use their templates. Recognition alone is not support: verify real diagrams, creation, editing, and source synchronization in the browser. Keep scope and limitations explicit.
 

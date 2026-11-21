@@ -1,0 +1,43 @@
+@startuml
+class Gateway
+class Auth
+class Users
+class Orders
+class Catalog
+class Cart
+class Payments
+class Shipping
+class Inventory
+class Notifications
+class Audit
+class Search
+class Pricing
+class Reviews
+Gateway --> Auth
+Gateway --> Orders
+Gateway --> Catalog
+Gateway --> Cart
+Gateway --> Search
+Auth --> Users
+Auth --> Audit
+Orders --> Users
+Orders --> Payments
+Orders --> Shipping
+Orders --> Inventory
+Orders --> Notifications
+Orders --> Audit
+Cart --> Catalog
+Cart --> Pricing
+Cart --> Inventory
+Catalog --> Inventory
+Catalog --> Pricing
+Catalog --> Reviews
+Search --> Catalog
+Search --> Reviews
+Payments --> Audit
+Payments --> Notifications
+Shipping --> Inventory
+Shipping --> Notifications
+Reviews --> Users
+Pricing --> Audit
+@enduml
